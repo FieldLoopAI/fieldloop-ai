@@ -1,0 +1,12 @@
+{
+  "name": "fieldloop-export-contractor-pdf",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1095.0",
+    "@supabase/supabase-js": "^2.110.8",
+    "pdf-lib": "^1.17.1",
+    "ws": "^8.21.1"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "fieldloop-resend-technician-setup",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.1095.0",
+    "@aws-sdk/client-ses": "^3.1095.0",
+    "@supabase/supabase-js": "^2.110.8",
+    "ws": "^8.21.1"
+  }
+}
