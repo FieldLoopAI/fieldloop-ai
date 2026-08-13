@@ -10,8 +10,12 @@ param(
     'update-technician', 'deactivate-technician',
     'voice-token', 'voice-extract',
     'resend-technician-setup', 'complete-technician-setup',
-    'list-kb-entries', 'create-kb-entry', 'review-kb-entry',
-    'terminate-contractor'
+    'terminate-contractor', 'search-kb-entries', 'list-kb-trades',
+    'list-invoices', 'list-estimates', 'update-estimate',
+    'get-job-file', 'submit-kb-entry', 'list-my-kb-submissions',
+    'get-platform-overview', 'list-platform-contractors',
+    'list-kb-submissions-admin', 'review-kb-submission',
+    'get-platform-contractor-usage'
   )]
   [string]$FunctionName
 )

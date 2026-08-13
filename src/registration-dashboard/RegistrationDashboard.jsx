@@ -1,5 +1,6 @@
 // Registration dashboard feature
 import React, { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../shared/services/api';
 import { supabase } from '../shared/services/supabaseClient';
 
@@ -11,7 +12,6 @@ import Step5ComplianceLicensing from './steps/Step5ComplianceLicensing';
 import Step6OperationsWorkforce from './steps/Step6OperationsWorkforce';
 import Step7SecureFinancials from './steps/Step7SecureFinancials';
 import Step8InternalSystemSettings from './steps/Step8InternalSystemSettings';
-import KnowledgeBasePanel from './KnowledgeBasePanel';
 
 import {
   Lock,
@@ -70,11 +70,6 @@ export default function RegistrationDashboard({ staffUser }) {
   // Main states
   const activeUser = staffUser;
   const canCreateContractor = ['admin', 'onboarding'].includes(activeUser.role);
-  const canManageKnowledgeBase = ['admin', 'onboarding'].includes(activeUser.role);
-  // Top-level view: 'contractors' is the existing wizard/search UI; 'knowledgeBase'
-  // is a separate staff-only panel, not part of any contractor's record, so it
-  // deliberately isn't persisted to sessionStorage alongside contractor nav state.
-  const [view, setView] = useState('contractors');
   const persistedNav = readPersistedNav();
   const [activeContractorId, setActiveContractorId] = useState(persistedNav.activeContractorId || '');
   const [activeStep, setActiveStep] = useState(persistedNav.activeStep || 1);
@@ -599,6 +594,11 @@ export default function RegistrationDashboard({ staffUser }) {
             User: {activeUser.email.split('@')[0]} ({activeUser.role})
           </span>
           <div className="header-controls">
+            {activeUser.role === 'admin' && (
+              <Link to="/staff/platform" className="drawer-toggle-btn">
+                <Search size={14} /> Platform Overview
+              </Link>
+            )}
             <button
               type="button"
               className="drawer-toggle-btn"
@@ -639,35 +639,8 @@ export default function RegistrationDashboard({ staffUser }) {
           </div>
         </div>
 
-        {canManageKnowledgeBase && (
-          <div style={{ display: 'flex', gap: '8px', marginBottom: '1.25rem' }}>
-            <button
-              type="button"
-              className={view === 'contractors' ? 'btn-spec-primary' : 'btn-spec-outline'}
-              onClick={() => setView('contractors')}
-            >
-              Contractors
-            </button>
-            <button
-              type="button"
-              className={view === 'knowledgeBase' ? 'btn-spec-primary' : 'btn-spec-outline'}
-              onClick={() => setView('knowledgeBase')}
-            >
-              Knowledge Base
-            </button>
-          </div>
-        )}
-
-        {view === 'knowledgeBase' && (
-          <KnowledgeBasePanel
-            canManage={canManageKnowledgeBase}
-            setErrorBanner={setErrorBanner}
-            setSuccessBanner={setSuccessBanner}
-          />
-        )}
-
         {/* Landing mode tabs — only shown when no contractor is active */}
-        {view === 'contractors' && !contractorData && (
+        {!contractorData && (
           <>
             <div style={{ display: 'flex', gap: '8px', marginBottom: '1.25rem' }}>
               <button
@@ -833,7 +806,7 @@ export default function RegistrationDashboard({ staffUser }) {
         )}
 
         {/* Contractor Details Header */}
-        {view === 'contractors' && contractorData && (
+        {contractorData && (
           <div className="contractor-header-area">
             <div className="breadcrumbs">
               Contractor Registration › {contractorData.contractor.legal_name}
@@ -856,7 +829,7 @@ export default function RegistrationDashboard({ staffUser }) {
             actually loaded — the landing tabs above already communicate
             "nothing loaded yet", so don't also show this section's own
             empty-state fallback underneath them. */}
-        {view === 'contractors' && contractorData && (
+        {contractorData && (
         <>
         {/* Horizontal Stepper Navigation Bar */}
         <div className="horizontal-stepper">

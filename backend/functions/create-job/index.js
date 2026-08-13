@@ -2,6 +2,7 @@
 const crypto = require('crypto');
 const { requireContractorRole } = require('./shared/contractorAuth');
 const { getSupabaseClient } = require('./shared/supabaseClient');
+const { geocodeAddress } = require('./shared/geocoding');
 
 const CORS_HEADERS = { 'Access-Control-Allow-Origin': '*' };
 
@@ -144,6 +145,12 @@ exports.handler = async (event) => {
     // ---- Create the job ----
     const status = (technician_id && startDate) ? 'scheduled' : 'draft';
 
+    // Best-effort — geocoding.js degrades to null on any failure (missing
+    // secret, bad address, quota, network), which is fine: geofencing just
+    // won't activate for this job, but job creation itself must never be
+    // blocked by an external vendor call.
+    const geocoded = await geocodeAddress(service_address.trim());
+
     const { data: job, error: jobError } = await supabase
       .from('jobs')
       .insert({
@@ -154,6 +161,8 @@ exports.handler = async (event) => {
         trade_category: trade_category?.trim() || null,
         description: description?.trim() || null,
         service_address: service_address.trim(),
+        service_lat: geocoded?.lat ?? null,
+        service_lng: geocoded?.lng ?? null,
         scheduled_start: startDate ? startDate.toISOString() : null,
         scheduled_end: endDate ? endDate.toISOString() : null,
         status,
@@ -162,6 +171,7 @@ exports.handler = async (event) => {
       })
       .select(`
         id, job_id_public, job_type, trade_category, description, service_address,
+        service_lat, service_lng,
         scheduled_start, scheduled_end, status, lead_technician_id, total_estimate, created_at,
         customers ( id, household_name, primary_contact_name, primary_phone ),
         technicians ( id, full_name )

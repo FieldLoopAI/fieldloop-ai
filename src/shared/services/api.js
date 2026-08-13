@@ -121,13 +121,15 @@ export const api = {
   saveSystemSettings: (settings) =>
     authFetch('settings', { body: settings }),
 
-  listKbEntries: (filters) =>
-    authFetch('kb-entries/list', { body: filters || {} }).then((res) => res.entries),
+  // Knowledge-base ask-a-question endpoint (search-kb-entries) — reachable
+  // by both contractor dashboard users and, separately, technicians (via
+  // their own JWT, not through this browser client). See
+  // Fieldloop Docs\FieldLoop_KB_Technical_Design.md §4 for the retrieval-
+  // first/confidence-gated query flow this calls into.
+  listKbTrades: () => authFetch('kb/trades', { body: {} }).then((res) => res.trades),
 
-  createKbEntry: (entryData) => authFetch('kb-entries', { body: entryData }),
-
-  reviewKbEntry: (id, decision, editedAnswer) =>
-    authFetch('kb-entries/review', { body: { id, decision, edited_answer: editedAnswer } }),
+  searchKbEntries: (question, tradeSlug, subcategorySlug) =>
+    authFetch('kb/search', { body: { question, trade_slug: tradeSlug, subcategory_slug: subcategorySlug } }),
 
   createContractorPortalUser: (contractorId, userId, password) =>
     authFetch('contractors/portal-user', { body: { contractorId, userId, password } }),
@@ -182,4 +184,48 @@ export const api = {
         client_timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       },
     }),
+
+  // Real job-specific event timeline (field_events, written by the
+  // technician mobile app) — backs the "View job file" action.
+  getJobFile: (jobId) => authFetch('jobs/job-file', { body: { job_id: jobId } }),
+
+  // Read-only — invoices are compiled by the technician's mobile app +
+  // Stripe Connect (HANDOFF.md §11.3, Beat 7), never created/edited here.
+  listInvoices: () => authFetch('invoices/list', { body: {} }).then((res) => res.invoices),
+
+  // Read-only list + the contractor's one real decision (approve/reject a
+  // customer-signed estimate or change order) — drafting, editing, and
+  // sending to the customer all happen on the technician's mobile app.
+  listEstimates: () => authFetch('estimates/list', { body: {} }).then((res) => res.estimates),
+
+  updateEstimate: (estimateId, changes) =>
+    authFetch('estimates/update', { body: { estimate_id: estimateId, ...changes } }),
+
+  // Contractor-authored Knowledge Base submission — lands as status:
+  // 'pending', reviewed by FieldLoop staff (backend/scripts/approve-kb-
+  // entries.mjs or reject-kb-entries.mjs) before it's searchable via
+  // searchKbEntries above.
+  submitKbEntry: (payload) => authFetch('kb/submit', { body: payload }),
+
+  listMyKbSubmissions: () =>
+    authFetch('kb/my-submissions', { body: {} }).then((res) => res.entries),
+
+  // Platform Overview (admin-only, HANDOFF.md §24) — cross-contractor,
+  // not scoped to a single tenant like everything else in this file.
+  getPlatformOverview: () => authFetch('platform/overview', { body: {} }),
+
+  listPlatformContractors: () =>
+    authFetch('platform/contractors', { body: {} }).then((res) => res.contractors),
+
+  listKbSubmissionsAdmin: (status) =>
+    authFetch('kb/admin/submissions', { body: status ? { status } : {} }).then((res) => res.submissions),
+
+  reviewKbSubmission: (entryId, action) =>
+    authFetch('kb/admin/review', { body: { entry_id: entryId, action } }),
+
+  // One contractor's real jobs/technicians/invoices/estimates/KB
+  // submissions — get-contractor (above) covers profile/compliance/
+  // financials/audit-log, this covers the operational side (HANDOFF.md §25).
+  getPlatformContractorUsage: (contractorId) =>
+    authFetch('platform/contractors/usage', { body: { contractorId } }),
 };

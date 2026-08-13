@@ -9,7 +9,7 @@
 // one of them is actually used).
 const { requireContractorRole } = require('./shared/contractorAuth');
 const { getSupabaseClient } = require('./shared/supabaseClient');
-const { issueSetupToken, buildSetupLink } = require('./shared/technicianSetupTokens');
+const { issueSetupToken, buildSetupLink, formatSetupCode } = require('./shared/technicianSetupTokens');
 const { sendMessage } = require('./shared/messagingAdapter');
 
 const CORS_HEADERS = { 'Access-Control-Allow-Origin': '*' };
@@ -43,28 +43,32 @@ exports.handler = async (event) => {
       return { statusCode: 400, headers: CORS_HEADERS, body: JSON.stringify({ error: 'This technician has already completed setup.' }) };
     }
 
-    const { rawToken } = await issueSetupToken(supabase, {
+    const { rawToken, rawCode } = await issueSetupToken(supabase, {
       technicianId: tech.id,
       createdBy: contractorUser.id,
     });
     const setupLink = buildSetupLink(rawToken);
+    const displayCode = formatSetupCode(rawCode);
 
     // Delivery routes through the shared messaging adapter (HANDOFF.md §19)
-    // instead of this Lambda's own Twilio/SES branching.
+    // instead of this Lambda's own Twilio/SES branching. Both a code
+    // (in-app entry, §21.2) and a link (web fallback, §18) are sent
+    // together, same reasoning as add-technician.
     const smsBody = [
-      'FieldLoop — Here is a new setup link for your technician account.',
-      `Tap the link to set your password and finish setup: ${setupLink}`,
-      'This link expires in 48 hours.',
+      'FieldLoop — Here is a new setup code for your technician account.',
+      `Open the app and enter setup code ${displayCode}, or tap this link: ${setupLink}`,
+      'This expires in 48 hours.',
     ].join('\n');
-    const emailSubject = 'Your FieldLoop Technician Account — Setup Link';
+    const emailSubject = 'Your FieldLoop Technician Account — Setup Code';
     const emailHtml = `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;padding:32px">
           <h2 style="color:#0f1b2d;margin:0 0 12px">Finish setting up your FieldLoop account</h2>
-          <p style="color:#455469;margin:0 0 20px">Tap below to set your password and finish setup — you'll sign in on the FieldLoop mobile app afterward using your phone number (${tech.mobile_phone}) and the password you choose.</p>
+          <p style="color:#455469;margin:0 0 20px">Open the FieldLoop app and enter the setup code below, or tap the button, to set your password and finish setup — you'll sign in afterward using your phone number (${tech.mobile_phone}) and the password you choose.</p>
           <div style="background:#f0f8f4;border:1px solid #c9eed9;border-radius:8px;padding:20px;margin:0 0 20px;text-align:center">
+            <p style="font-family:monospace;font-size:24px;letter-spacing:2px;font-weight:700;color:#0f1b2d;margin:0 0 16px">${displayCode}</p>
             <a href="${setupLink}" style="display:inline-block;background:#1f9d61;color:#fff;text-decoration:none;padding:12px 24px;border-radius:6px;font-weight:600">Set Your Password</a>
           </div>
-          <p style="color:#d02c2c;font-weight:600;margin:0 0 12px">⚠ This link expires in 48 hours.</p>
+          <p style="color:#d02c2c;font-weight:600;margin:0 0 12px">⚠ This expires in 48 hours.</p>
           <p style="color:#8a94a3;font-size:13px;margin:0">If you did not expect this email, please ignore it.</p>
         </div>`;
 
@@ -100,6 +104,7 @@ exports.handler = async (event) => {
     if (!deliveryResult.delivered) {
       response.credential_delivery.reason = deliveryResult.reason;
       response.credential_delivery.setup_link = setupLink;
+      response.credential_delivery.setup_code = displayCode;
       response.credential_delivery.warning =
         'The setup link could not be delivered automatically. It is shown once — share it securely with the technician.';
     }

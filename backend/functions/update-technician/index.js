@@ -1,7 +1,7 @@
 // backend/functions/update-technician/index.js
 const { requireContractorRole } = require('./shared/contractorAuth');
 const { getSupabaseClient } = require('./shared/supabaseClient');
-const { issueSetupToken, buildSetupLink } = require('./shared/technicianSetupTokens');
+const { issueSetupToken, buildSetupLink, formatSetupCode } = require('./shared/technicianSetupTokens');
 const { sendMessage } = require('./shared/messagingAdapter');
 
 const CORS_HEADERS = { 'Access-Control-Allow-Origin': '*' };
@@ -153,18 +153,19 @@ exports.handler = async (event) => {
             .eq('technician_id', technician_id)
             .is('used_at', null);
 
-          const { rawToken } = await issueSetupToken(supabase, {
+          const { rawToken, rawCode } = await issueSetupToken(supabase, {
             technicianId: technician_id,
             createdBy: contractorUser.id,
           });
           const setupLink = buildSetupLink(rawToken);
+          const displayCode = formatSetupCode(rawCode);
           const smsBody = [
             'FieldLoop — Your technician account login number was updated.',
-            `Tap the link to set your password and finish setup: ${setupLink}`,
-            'This link expires in 48 hours.',
+            `Open the app and enter setup code ${displayCode}, or tap this link: ${setupLink}`,
+            'This expires in 48 hours.',
           ].join('\n');
           const emailSubject = 'Your FieldLoop technician login number was updated';
-          const emailHtml = `<p>Your technician account login number was updated. Tap below to set your password and finish setup:</p><p><a href="${setupLink}">Set Your Password</a></p><p>This link expires in 48 hours.</p>`;
+          const emailHtml = `<p>Your technician account login number was updated. Open the FieldLoop app and enter setup code <strong>${displayCode}</strong>, or tap below, to set your password and finish setup:</p><p><a href="${setupLink}">Set Your Password</a></p><p>This expires in 48 hours.</p>`;
           const deliveryResult = await sendMessage(supabase, {
             preferredChannel: existingTech.delivery_channel,
             phone: cleanPhone,
@@ -192,6 +193,30 @@ exports.handler = async (event) => {
             notificationWarning = `Login phone updated, but the change-notification message could not be delivered automatically (${deliveryResult.reason}). Let the technician know their login number changed to ${cleanPhone}.`;
           }
         }
+      }
+    }
+
+    // ---- Email change: sync to the Auth user as a real, confirmed identity.
+    // add-technician now registers email as a second Auth identity whenever
+    // one is on file (so "identifier: email or phone" works on login) — this
+    // keeps that in lockstep on edit, same reasoning as the phone-change
+    // block above. Only fires when the email actually changed and isn't
+    // being cleared, to avoid pointless email_confirm churn on unrelated
+    // edits and to avoid Supabase Auth email-removal semantics, which
+    // aren't needed here.
+    if (email !== undefined && updates.email && updates.email !== existingTech.email) {
+      const { error: emailAuthError } = await supabase.auth.admin.updateUserById(existingTech.auth_user_id, {
+        email: updates.email,
+        email_confirm: true,
+      });
+      if (emailAuthError) {
+        if (emailAuthError.message?.includes('already') || emailAuthError.message?.includes('exists')) {
+          return {
+            statusCode: 400, headers: CORS_HEADERS,
+            body: JSON.stringify({ error: 'An authentication account with this email already exists.' }),
+          };
+        }
+        throw new Error(emailAuthError.message);
       }
     }
 

@@ -2,7 +2,7 @@
 const crypto = require('crypto');
 const { requireContractorRole } = require('./shared/contractorAuth');
 const { getSupabaseClient } = require('./shared/supabaseClient');
-const { issueSetupToken, buildSetupLink } = require('./shared/technicianSetupTokens');
+const { issueSetupToken, buildSetupLink, formatSetupCode } = require('./shared/technicianSetupTokens');
 const { sendMessage } = require('./shared/messagingAdapter');
 
 const CORS_HEADERS = { 'Access-Control-Allow-Origin': '*' };
@@ -141,7 +141,12 @@ exports.handler = async (event) => {
     // deliberately get no contractor_users row, since the web Contractor
     // Command Dashboard has no per-role content gating and a contractor_users
     // row is what the web login checks for. ----
-    const { data: authUser, error: authError } = await supabase.auth.admin.createUser({
+    // Email is registered as a second, pre-confirmed Auth identity (not just
+    // the technicians.email contact column) whenever one is on file — the
+    // mobile login screen accepts "identifier: email or phone", and without
+    // this, signInWithPassword({ email }) has no identity to match against
+    // and would always fail for a technician who has an email.
+    const authPayload = {
       phone: cleanPhone,
       password: tempPassword,
       phone_confirm: true,
@@ -149,13 +154,19 @@ exports.handler = async (event) => {
         must_change_password: true,
         contractor_id: contractorUser.contractor_id,
       },
-    });
+    };
+    if (cleanEmail) {
+      authPayload.email = cleanEmail;
+      authPayload.email_confirm = true;
+    }
+
+    const { data: authUser, error: authError } = await supabase.auth.admin.createUser(authPayload);
 
     if (authError) {
       if (authError.message?.includes('already') || authError.message?.includes('exists')) {
         return {
           statusCode: 400, headers: CORS_HEADERS,
-          body: JSON.stringify({ error: 'An authentication account with this phone number already exists.' }),
+          body: JSON.stringify({ error: 'An authentication account with this phone number or email already exists.' }),
         };
       }
       throw new Error(authError.message);
@@ -202,29 +213,34 @@ exports.handler = async (event) => {
     // Expires in 48h; a resend (see resend-technician-setup) issues a
     // second, independently-valid token rather than invalidating this one —
     // both stay live until whichever is used first. ----
-    const { rawToken } = await issueSetupToken(supabase, {
+    const { rawToken, rawCode } = await issueSetupToken(supabase, {
       technicianId: techRow.id,
       createdBy: contractorUser.id,
     });
     const setupLink = buildSetupLink(rawToken);
+    const displayCode = formatSetupCode(rawCode);
 
-    // ---- Deliver the setup link via the shared messaging adapter (see
-    // HANDOFF.md §19) — routes through Twilio/SES/simulation-log depending
-    // on MESSAGING_PROVIDER, without this Lambda needing to know which. ----
+    // ---- Deliver the setup link + code via the shared messaging adapter
+    // (see HANDOFF.md §19) — routes through Twilio/SES/simulation-log
+    // depending on MESSAGING_PROVIDER, without this Lambda needing to know
+    // which. Both a link (web fallback, §18) and a code (in-app entry,
+    // §21.2) are sent together — same underlying secret, two ways to use
+    // it, so whichever surface the technician has available works. ----
     const smsBody = [
       'FieldLoop — Your technician account is ready.',
-      `Tap the link to set your password and finish setup: ${setupLink}`,
-      'This link expires in 48 hours.',
+      `Open the app and enter setup code ${displayCode}, or tap this link: ${setupLink}`,
+      'This expires in 48 hours.',
     ].join('\n');
     const emailSubject = 'Your FieldLoop Technician Account';
     const emailHtml = `
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;max-width:520px;margin:0 auto;padding:32px">
           <h2 style="color:#0f1b2d;margin:0 0 12px">Welcome to FieldLoop</h2>
-          <p style="color:#455469;margin:0 0 20px">Your technician account has been created. Tap below to set your password and finish setup — you'll sign in on the FieldLoop mobile app afterward using your phone number (${cleanPhone}) and the password you choose.</p>
+          <p style="color:#455469;margin:0 0 20px">Your technician account has been created. Open the FieldLoop app and enter the setup code below, or tap the button, to set your password and finish setup — you'll sign in afterward using your phone number (${cleanPhone}) and the password you choose.</p>
           <div style="background:#f0f8f4;border:1px solid #c9eed9;border-radius:8px;padding:20px;margin:0 0 20px;text-align:center">
+            <p style="font-family:monospace;font-size:24px;letter-spacing:2px;font-weight:700;color:#0f1b2d;margin:0 0 16px">${displayCode}</p>
             <a href="${setupLink}" style="display:inline-block;background:#1f9d61;color:#fff;text-decoration:none;padding:12px 24px;border-radius:6px;font-weight:600">Set Your Password</a>
           </div>
-          <p style="color:#d02c2c;font-weight:600;margin:0 0 12px">⚠ This link expires in 48 hours.</p>
+          <p style="color:#d02c2c;font-weight:600;margin:0 0 12px">⚠ This expires in 48 hours.</p>
           <p style="color:#8a94a3;font-size:13px;margin:0">If you did not expect this email, please ignore it.</p>
         </div>`;
 
@@ -277,12 +293,14 @@ exports.handler = async (event) => {
       },
     };
 
-    // If delivery failed, surface the setup link so the contractor can
-    // share it manually (one-time display, over HTTPS) — never a password,
-    // since no password exists yet until the technician sets one themself.
+    // If delivery failed, surface the setup link + code so the contractor
+    // can share them manually (one-time display, over HTTPS) — never a
+    // password, since no password exists yet until the technician sets one
+    // themself.
     if (!deliveryResult.delivered) {
       response.credential_delivery.reason = deliveryResult.reason;
       response.credential_delivery.setup_link = setupLink;
+      response.credential_delivery.setup_code = displayCode;
       response.credential_delivery.warning =
         'The setup link could not be delivered automatically. It is shown once — share it securely with the technician.';
     }

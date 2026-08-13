@@ -10,6 +10,7 @@ const initials = name => name.split(' ').map(word => word[0]).join('').slice(0, 
 // both as the <input type="date"> value and as the key for "is this today".
 const localDateString = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const TODAY_STR = localDateString(new Date());
+const jobStatusColor = (status) => status === 'on_site' ? 'green' : status === 'en_route' ? 'amber' : ['complete', 'closed', 'invoiced', 'paid'].includes(status) ? 'gray' : 'gray';
 // Voice capture needs mic access, MediaRecorder, and WebSocket — a stable
 // per-session check, never re-evaluated at runtime, so a plain module-level
 // constant is fine (no browser gains/loses these mid-session).
@@ -63,7 +64,7 @@ function clearAllPersistedDashboardState() {
 
 export default function ContractorCommandDashboard({ tenant, onLogout }) {
   const persistedNav = readPersistedNav();
-  const [now, setNow] = useState(new Date()); const [activePage, setActivePage] = useState(persistedNav.activePage || 1); const [approval, setApproval] = useState('pending'); const [search, setSearch] = useState(''); const [paused, setPaused] = useState([]); const [exports, setExports] = useState([{ requested: '2026-07-15 09:22', type: 'Q2 2026 all records', by: 'Sofia Gonzalez', size: '2.1 GB', status: 'Ready' }, { requested: '2026-06-30 16:41', type: 'H1 2026 invoices + payments', by: 'Sofia Gonzalez', size: '84 MB', status: 'Expired 07/03' }]); const [include, setInclude] = useState(['Job records', 'Customer records', 'Estimates & change orders', 'Invoices & payments', 'Site photos (14,280 files)', 'Voice notes / transcripts', 'GPS timelines', 'Barcode scans / parts', 'SMS transcripts', 'Reconciliation reports']); const [toast, setToast] = useState('');
+  const [now, setNow] = useState(new Date()); const [activePage, setActivePage] = useState(persistedNav.activePage || 1); const [search, setSearch] = useState(''); const [paused, setPaused] = useState([]); const [exports, setExports] = useState([{ requested: '2026-07-15 09:22', type: 'Q2 2026 all records', by: 'Sofia Gonzalez', size: '2.1 GB', status: 'Ready' }, { requested: '2026-06-30 16:41', type: 'H1 2026 invoices + payments', by: 'Sofia Gonzalez', size: '84 MB', status: 'Expired 07/03' }]); const [include, setInclude] = useState(['Job records', 'Customer records', 'Estimates & change orders', 'Invoices & payments', 'Site photos (14,280 files)', 'Voice notes / transcripts', 'GPS timelines', 'Barcode scans / parts', 'SMS transcripts', 'Reconciliation reports']); const [toast, setToast] = useState('');
   const [realTechs, setRealTechs] = useState(null);
   const [techLoading, setTechLoading] = useState(false);
   // Reopen a write modal automatically if a draft survived a tab
@@ -101,6 +102,14 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
   // it with stale data — the same race already found and fixed once in
   // RegistrationDashboard.jsx's loadContractor (see HANDOFF.md §9 Round 2).
   const loadJobsRequestIdRef = useRef(0);
+  // Invoices/estimates are lifted here (not local to their panels) so the
+  // KPI grid and greeting line can reflect real numbers too, same reason
+  // jobs/technicians are lifted rather than fetched inside Panel 1/3.
+  const [realInvoices, setRealInvoices] = useState(null);
+  const [invoicesLoading, setInvoicesLoading] = useState(false);
+  const [realEstimates, setRealEstimates] = useState(null);
+  const [estimatesLoading, setEstimatesLoading] = useState(false);
+  const [viewingJobFileId, setViewingJobFileId] = useState(null);
 
   // Keep sessionStorage in sync with which screen is active so a tab
   // discard/reload restores it instead of resetting to Section 1.
@@ -172,6 +181,30 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
     }
   }, []);
 
+  const loadInvoices = useCallback(async () => {
+    setInvoicesLoading(true);
+    try {
+      const list = await api.listInvoices();
+      setRealInvoices(list);
+    } catch (err) {
+      console.warn('Failed to load live invoices:', err.message);
+    } finally {
+      setInvoicesLoading(false);
+    }
+  }, []);
+
+  const loadEstimates = useCallback(async () => {
+    setEstimatesLoading(true);
+    try {
+      const list = await api.listEstimates();
+      setRealEstimates(list);
+    } catch (err) {
+      console.warn('Failed to load live estimates:', err.message);
+    } finally {
+      setEstimatesLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (activePage === 1) {
       loadJobs(selectedDate);
@@ -180,7 +213,14 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
     if (activePage === 3) {
       loadTechs();
     }
-  }, [activePage, selectedDate, loadJobs, loadTechs]);
+    if (activePage === 2) loadEstimates();
+    if (activePage === 7) loadInvoices();
+  }, [activePage, selectedDate, loadJobs, loadTechs, loadEstimates, loadInvoices]);
+
+  // Loaded once on mount (regardless of active page) so the KPI grid and
+  // greeting line reflect real numbers from the moment the dashboard opens,
+  // not just after the contractor happens to visit Panel 2/7.
+  useEffect(() => { loadInvoices(); loadEstimates(); }, [loadInvoices, loadEstimates]);
 
   useEffect(() => { const id = setInterval(() => setNow(new Date()), 1000); return () => clearInterval(id); }, []);
   const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening';
@@ -190,7 +230,6 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
   // the existing mock-era JSX/CSS below already expect, so the markup itself
   // doesn't need to change shape.
   const formatBoardTime = (iso) => !iso ? '— —' : new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
-  const jobStatusColor = (status) => status === 'on_site' ? 'green' : status === 'en_route' ? 'amber' : ['complete', 'closed', 'invoiced', 'paid'].includes(status) ? 'gray' : 'gray';
   const toBoardJob = (row) => {
     const customer = row.customers;
     const technician = row.technicians;
@@ -235,11 +274,31 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
     }
   };
 
-  const kpis = [{ label: selectedDate === null ? 'ALL JOBS' : selectedDate === TODAY_STR ? "TODAY'S JOBS" : 'JOBS THIS DAY', value: activeJobs.length, sub: '2 on site · 1 en route', color: 'green' }, { label: 'TECHS ON CLOCK', value: '6 of 9', sub: '3 off / PTO today' }, { label: 'AWAITING APPROVAL', value: approval === 'pending' ? '3' : '2', sub: '2 estimates · 1 change order', color: 'amber' }, { label: 'THIS WEEK — INVOICED', value: '$18,940', sub: '$12,480 unpaid' }, { label: 'PLATFORM FEE (MTD)', value: '$1,247', sub: '1.95% · $63,948 processed' }];
+  // Real aggregates from realEstimates/realInvoices (lifted state above) —
+  // null while still loading, so these default to empty arrays rather than
+  // showing a misleading zero mid-fetch.
+  // 'signed' = the customer has already e-signed on the technician's mobile
+  // app — this is the one point where the estimate is genuinely awaiting
+  // the contractor's own decision (approve/reject), matching update-estimate.
+  const pendingEstimates = (realEstimates ?? []).filter(e => e.status === 'signed');
+  const unpaidInvoices = (realInvoices ?? []).filter(i => i.status === 'invoiced');
+  const unpaidTotal = unpaidInvoices.reduce((sum, i) => sum + Number(i.total || 0), 0);
+  const thisMonthPaid = (realInvoices ?? []).filter(i => i.paid_ts && new Date(i.paid_ts).getMonth() === now.getMonth() && new Date(i.paid_ts).getFullYear() === now.getFullYear());
+  const platformFeeMtd = thisMonthPaid.reduce((sum, i) => sum + Number(i.platform_fee || 0), 0);
+  const processedMtd = thisMonthPaid.reduce((sum, i) => sum + Number(i.total || 0), 0);
+  const money = (n) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+
+  const kpis = [
+    { label: selectedDate === null ? 'ALL JOBS' : selectedDate === TODAY_STR ? "TODAY'S JOBS" : 'JOBS THIS DAY', value: activeJobs.length, sub: `${activeJobs.filter(j => j.status === 'on_site').length} on site · ${activeJobs.filter(j => j.status === 'en_route').length} en route`, color: 'green' },
+    { label: 'TECHS ON CLOCK', value: '6 of 9', sub: '3 off / PTO today' },
+    { label: 'AWAITING APPROVAL', value: String(pendingEstimates.length), sub: `${pendingEstimates.filter(e => e.doc_type === 'estimate').length} estimates · ${pendingEstimates.filter(e => e.doc_type === 'change_order').length} change orders`, color: 'amber' },
+    { label: 'UNPAID INVOICES', value: money(unpaidTotal), sub: `${unpaidInvoices.length} invoice${unpaidInvoices.length === 1 ? '' : 's'} outstanding` },
+    { label: 'PLATFORM FEE (MTD)', value: money(platformFeeMtd), sub: `1.95% · ${money(processedMtd)} processed` },
+  ];
   const filteredCustomers = customers.filter(c => Object.values(c).join(' ').toLowerCase().includes(search.toLowerCase()));
   const flash = message => { setToast(message); setTimeout(() => setToast(''), 2800); };
   const requestExport = () => { const entry = { requested: now.toLocaleString('sv-SE').slice(0, 16), type: 'Custom data archive', by: 'Marcus Reyes', size: `${(include.length * .34).toFixed(1)} GB`, status: 'Queued' }; setExports(e => [entry, ...e]); flash('Export request queued. A secure link will be delivered when ready.'); setTimeout(() => setExports(e => e.map((x, i) => i === 0 ? { ...x, status: 'Ready' } : x)), 1600); };
-  const pages = ['Live dispatch', 'Approvals queue', 'Technicians', 'Fleet & vehicles', 'Customer database', 'Live field data', 'Invoices & payments', 'Reports & analytics', 'Data archive & export', 'Team & access'];
+  const pages = ['Live dispatch', 'Approvals queue', 'Technicians', 'Fleet & vehicles', 'Customer database', 'Live field data', 'Invoices & payments', 'Reports & analytics', 'Data archive & export', 'Team & access', 'Knowledge Base'];
   const displayTechs = realTechs !== null ? realTechs : mockTechnicians;
   // add-technician/list-technicians are owner_admin-only server-side
   // (backend/sql/006_technicians_fix_identity.sql) — hide the write action
@@ -261,15 +320,19 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
         <button onClick={() => setModalNotice(null)} style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit', fontWeight: 'bold' }}>✕</button>
       </div>}
       <div className="security-banner"><div className="security-icon"><Lock size={20} /></div><div><label>SIGNED IN AS</label><strong>{tenant.user} · {tenant.role}</strong><small>MFA <em>Verified (TOTP)</em></small></div><div className="security-side"><label>AUTH LEVEL</label><strong>Full read/write · billing</strong><label>IDLE TIMEOUT</label><span>20 minutes</span></div></div>
-      <div className="breadcrumb">Command Center <ChevronRight size={14} /> Dashboard</div><div className="greeting"><div><h1>{greeting}, {tenant.user} <Pill>{now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} · {now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</Pill></h1><p><b>{activeJobs.length} jobs{selectedDate === null ? ' total' : selectedDate === TODAY_STR ? ' scheduled today' : ` on ${boardDateLabel}`}</b> · <b>{approval === 'pending' ? 1 : 0} change order needs your approval</b> · <b>$12,480 in payments due this week</b></p></div></div>
+      <div className="breadcrumb">Command Center <ChevronRight size={14} /> Dashboard</div><div className="greeting"><div><h1>{greeting}, {tenant.user} <Pill>{now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} · {now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</Pill></h1><p><b>{activeJobs.length} jobs{selectedDate === null ? ' total' : selectedDate === TODAY_STR ? ' scheduled today' : ` on ${boardDateLabel}`}</b> · <b>{pendingEstimates.length} estimate{pendingEstimates.length === 1 ? '' : 's'} need{pendingEstimates.length === 1 ? 's' : ''} your approval</b> · <b>{money(unpaidTotal)} in unpaid invoices</b></p></div></div>
       <div className="kpi-grid">{kpis.map(k => <article className="kpi" key={k.label}><label>{k.label}</label><strong className={k.color || ''}>{k.value}</strong><small>{k.sub}</small></article>)}</div>
       <Panel num="1" title={`Live dispatch board — ${boardDateLabel}`} actions={<><div className="date-nav"><CalendarDays size={15} /><input type="date" value={selectedDate || ''} onChange={e => setSelectedDate(e.target.value || null)} /></div>{selectedDate !== null && <Button onClick={() => setSelectedDate(null)}>All</Button>}{selectedDate !== TODAY_STR && <Button onClick={() => setSelectedDate(TODAY_STR)}>Today</Button>}{canManageJobs && VOICE_CAPTURE_SUPPORTED && <Button onClick={() => setShowVoiceCapture(true)} title="Schedule a job by speaking the details"><Mic size={15} /> Voice schedule</Button>}{canManageJobs && !VOICE_CAPTURE_SUPPORTED && <Button disabled title="Voice capture needs a Chromium-based browser (Chrome or Edge)"><Mic size={15} /> Voice schedule</Button>}{canManageJobs && <Button primary onClick={() => setShowCreateJobModal(true)}><Plus size={15} /> Schedule new job</Button>}</>}>
         {jobsError && <div className="tech-error-banner">{jobsError}</div>}
-        {jobsLoading ? <div className="loading-roster">Loading dispatch board…</div> : activeJobs.length === 0 ? <div className="loading-roster">{selectedDate === null ? 'No jobs found.' : `No jobs scheduled for ${boardDateLabel}.`}</div> : <div className="dispatch">{activeJobs.map(job => <div className="dispatch-row" key={job.id}><div className="time-slot">{job.time.split(' ')[0]}<small>{job.time.split(' ')[1]}</small></div><article className="job-card"><label>{job.id} · {job.trade}</label><h3>{job.title}</h3><p>{job.address} · {job.phone}</p><div className="chips">{job.techs.map(t => <Pill key={t} tone="gray">👤 {t}</Pill>)}{job.vehicle && <Pill tone="gray">🚐 {job.vehicle}</Pill>}{job.warning && <Pill tone="amber">⚠ {job.warning}</Pill>}{job.estimate && <Pill>{job.estimate}</Pill>}</div><div className="job-footer"><div>{job.reassignable ? <select value={job.techId} disabled={reassignBusyId === job.rawId} onChange={e => reassignJob(job.rawId, e.target.value)}><option value="">Reassign tech…</option>{displayTechs.map(t => <option key={t.id || t.name} value={t.id || ''}>{t.full_name || t.name}</option>)}</select> : <Button disabled title="This job has moved past the dispatch stage">Reassign tech</Button>}<Button onClick={() => flash('Vehicle swap is a mock action.')}>Swap vehicle</Button><Button onClick={() => flash('Customer text is queued as a mock action.')}>Text customer</Button><Button>View job file</Button></div><Status color={job.statusColor}>{job.detail}</Status></div></article></div>)}</div>}
+        {jobsLoading ? <div className="loading-roster">Loading dispatch board…</div> : activeJobs.length === 0 ? <div className="loading-roster">{selectedDate === null ? 'No jobs found.' : `No jobs scheduled for ${boardDateLabel}.`}</div> : <div className="dispatch">{activeJobs.map(job => <div className="dispatch-row" key={job.id}><div className="time-slot">{job.time.split(' ')[0]}<small>{job.time.split(' ')[1]}</small></div><article className="job-card"><label>{job.id} · {job.trade}</label><h3>{job.title}</h3><p>{job.address} · {job.phone}</p><div className="chips">{job.techs.map(t => <Pill key={t} tone="gray">👤 {t}</Pill>)}{job.vehicle && <Pill tone="gray">🚐 {job.vehicle}</Pill>}{job.warning && <Pill tone="amber">⚠ {job.warning}</Pill>}{job.estimate && <Pill>{job.estimate}</Pill>}</div><div className="job-footer"><div>{job.reassignable ? <select value={job.techId} disabled={reassignBusyId === job.rawId} onChange={e => reassignJob(job.rawId, e.target.value)}><option value="">Reassign tech…</option>{displayTechs.map(t => <option key={t.id || t.name} value={t.id || ''}>{t.full_name || t.name}</option>)}</select> : <Button disabled title="This job has moved past the dispatch stage">Reassign tech</Button>}<Button onClick={() => flash('Vehicle swap is a mock action.')}>Swap vehicle</Button><Button onClick={() => flash('Customer text is queued as a mock action.')}>Text customer</Button><Button onClick={() => setViewingJobFileId(job.rawId)}>View job file</Button></div><Status color={job.statusColor}>{job.detail}</Status></div></article></div>)}</div>}
       </Panel>
-      <Panel num="2" title="Approvals queue — needs your decision" actions={<Pill tone="amber">◷ {approval === 'pending' ? '3' : '2'} pending</Pill>}>
-        {approval === 'pending' && <article className="approval-card warning"><div><h3>⚠ Change order — rotted subfloor discovered <Pill tone="blue">CUSTOMER SIGNED</Pill></h3><p>Job FL-2847 · Taylor Ramirez · 09:32 AM</p><p>Rotted subfloor under shower pan; 3 sheets of HardieBacker cement board plus carpentry hours are needed to sister joists. Customer e-signed by SMS and awaits your final go-ahead to bill.</p><Stats values={['ADDED LABOR|2.0 hrs @ $95', 'ADDED MATERIALS|$85.00', 'NEW JOB TOTAL|$8,725', 'CUSTOMER SIGNED|10:18 AM ✓']} /><div className="right-actions"><Button onClick={() => { setApproval('rejected'); flash('Change order rejected.'); }}>Reject</Button><Button onClick={() => flash('Change order marked for edits.')}>Edit & send back</Button><Button primary onClick={() => { setApproval('approved'); flash('Change order approved and added to billing.'); }}><Check size={15} /> Approve & bill</Button></div></div></article>}
-        {['Kitchen backsplash + island top', 'Guest bathroom refresh'].map((title, i) => <article className="approval-card draft" key={title}><h3>✎ New estimate — {title} <Pill tone="blue">DRAFT</Pill></h3><p>Prospect: {i ? 'Whitfield residence · Generated by Tyler · Today 7:48 AM' : 'Rodriguez family · Generated by Miguel · Yesterday 4:15 PM'}</p><p>{i ? 'Estimate is still being built and awaits your review.' : 'Good/Better/Best tiered proposal. Photos, dimensions, and voice notes attached. Awaits your review before sending.'}</p>{!i && <Stats values={['GOOD|$4,280', 'BETTER|$6,940', 'BEST|$9,150', 'PHOTOS|14 attached']} />}<div className="right-actions"><Button>Delete</Button><Button>Edit tiers</Button><Button primary onClick={() => flash(`${title} was sent to the customer.`)}>Send to customer</Button></div></article>)}
+      <Panel num="2" title="Approvals queue — needs your decision" actions={<Pill tone="amber">◷ {pendingEstimates.length} pending</Pill>}>
+        {estimatesLoading ? <div className="loading-roster">Loading approvals…</div> : (realEstimates ?? []).length === 0 ? <div className="loading-roster">No estimates or change orders yet — these are created and sent by the technician from the field, not from this dashboard.</div> : <>
+          {[...(realEstimates ?? [])].sort((a, b) => (a.status === 'signed' ? -1 : 0) - (b.status === 'signed' ? -1 : 0)).map(e => <EstimateCard key={e.id} estimate={e} flash={flash}
+            onApprove={async (id) => { await api.updateEstimate(id, { status: 'approved' }); flash('Approved and added to billing.'); await loadEstimates(); }}
+            onReject={async (id) => { await api.updateEstimate(id, { status: 'rejected' }); flash('Rejected.'); await loadEstimates(); }}
+          />)}
+        </>}
       </Panel>
       <Panel num="3" title={`Technicians (${displayTechs.length})`} actions={<><Button onClick={() => flash('Invite link action.')}><UserPlus size={15} /> Send invite link</Button><Button onClick={() => flash('Export roster action.')}>↓ Export roster</Button>{canManageTechnicians && <Button primary onClick={() => setShowAddTechModal(true)}><Plus size={15} /> Add technician</Button>}</>}>
         {techLoading ? <div className="loading-roster">Loading roster from database…</div> : <DataTable headers={['NAME', 'ROLE & SPECIALTY', 'CONTACT', 'CERTIFICATIONS', 'INVITE STATUS', 'ACTIONS']}>{displayTechs.map(t => {
@@ -297,10 +360,14 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
       <Panel num="4" title="Fleet & vehicles (3)" actions={<><Button>↓ Export</Button><Button primary><Plus size={15} /> Add vehicle</Button></>}><DataTable headers={['UNIT', 'VEHICLE', 'VIN (LAST 6)', 'ASSIGNED DRIVER', 'HEALTH', 'ACTIONS']}>{fleet.map(v => <tr key={v.unit}><td><Truck size={16} /> {v.unit}</td><td>{v.vehicle}</td><td>{v.vin}</td><td>{v.driver}</td><td><Status color={v.color}>{v.health}</Status></td><td><Button>Edit</Button> <Button>Retire</Button>{v.color === 'red' && <Button>View DTC</Button>}</td></tr>)}</DataTable><div className="inline-alert">⚠ <div><b>Truck 03 — thermostat DTC detected 06:42 AM</b><br />Coolant temperature is below its regulating threshold. Not critical; diagnose within the week. Today’s 22-mile drive should be safe.</div></div></Panel>
       <Panel num="5" title="Customer database" actions={<><div className="search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customers" /></div><Button>↓ Export</Button><Button primary><Plus size={15} /> Add customer</Button></>}><DataTable headers={['CUSTOMER', 'PHONE', 'EMAIL', 'ADDRESS', 'JOBS', 'LIFETIME VALUE', 'ACTIONS']}>{filteredCustomers.map(c => <tr key={c.name}><td>{c.name}</td><td>{c.phone}</td><td>{c.email}</td><td>{c.address}</td><td>{c.jobs}</td><td><b>{c.value}</b></td><td><Button>Open</Button> <Button>Edit</Button></td></tr>)}</DataTable></Panel>
       <Panel num="6" title="Live field data stream — Job FL-2847 (Master Bath Remodel)" actions={<><Button>📄 View full timeline</Button><Button>↓ Download job file</Button></>}><div className="field-event-list">{[['07:58 AM', 'GPS · GEOFENCE ENTRY', 'Taylor & Miguel arrived on site. Labor clock started automatically.', 'View map'], ['08:12 AM', 'PHOTO · VOICE-TAGGED', '“Pre-demo condition of shower pan. Note tile separation at north wall.”', 'View photo'], ['09:28 AM', 'PHOTO · VOICE-TAGGED', '“Rotted subfloor located at joist bay 3. Will need change order for HardieBacker and joist sister.”', 'View photo'], ['09:32 AM', 'BARCODE SCAN · TRUCK INVENTORY', '3× HardieBacker cement board (36×60) · Auto-billed to job at $28.99 each', 'View parts'], ['10:15 AM', 'SMS · CUSTOMER NOTIFICATION', 'Text sent to Sarah Anderson: “Change order ready for review. Tap link to sign.”', 'View SMS log'], ['10:18 AM', 'E-SIGNATURE · CUSTOMER APPROVED', 'Sarah Anderson e-signed change order remotely. Now awaits your final go-ahead to bill.', 'View signed doc']].map(([time, type, description, action]) => <div className="field-event" key={time + type}><time>{time}</time><Activity size={17} /><div><label>{type}</label><p>{description}</p></div><Button>{action}</Button></div>)}</div></Panel>
-      <Panel num="7" title="Invoices & payments" actions={<><Button>📊 View reconciliation</Button><Button>↓ Export CSV</Button></>}><Invoices flash={flash} /><div className="reconciliation"><b>Reconciliation summary — July MTD</b><p><strong>$63,948 processed</strong> · $1,247.00 platform fee withheld · <strong>$62,701 net</strong> to your Bank of America account. Next Friday ACH pull: $58.99.</p></div></Panel>
+      <Panel num="7" title="Invoices & payments" actions={<Button>↓ Export CSV</Button>}>
+        <Invoices invoices={realInvoices} loading={invoicesLoading} />
+        <div className="reconciliation"><b>Reconciliation summary — month to date</b><p><strong>{money(processedMtd)} processed</strong> · {money(platformFeeMtd)} platform fee withheld · <strong>{money(processedMtd - platformFeeMtd)} net</strong> to your account.</p></div>
+      </Panel>
       <Panel num="8" title="Reports & analytics" actions={<><Button><CalendarDays size={15} /> Change date range</Button><Button>↓ Export report</Button></>}><Reports /><Retention paused={paused} setPaused={setPaused} /></Panel>
       <Panel num="9" title="Data archive & export" actions={<span className="muted">Request historical data from FieldLoop · download to your local system</span>}><div className="ownership"><Archive size={21} /><div><b>You own your data. FieldLoop retains it for you.</b><p>Every job, photo, voice note, invoice, and payment record is exportable. Exports are watermarked and delivered through a secure 72-hour download link.</p></div></div><div className="export-form"><h3>Request a new data export</h3><div className="form-grid"><select><option>All records (full company archive)</option><option>Jobs only</option><option>Invoices only</option></select><select><option>Jan 01, 2026 → Jul 21, 2026</option></select><select><option>ZIP (CSV + PDF + JPEG)</option><option>CSV-only</option><option>PDF-only</option></select></div><div className="include-chips">{['Job records', 'Customer records', 'Estimates & change orders', 'Invoices & payments', 'Site photos (14,280 files)', 'Voice notes / transcripts', 'GPS timelines', 'Barcode scans / parts', 'SMS transcripts', 'Reconciliation reports'].map(item => <button key={item} className={include.includes(item) ? 'selected' : ''} onClick={() => setInclude(x => x.includes(item) ? x.filter(y => y !== item) : [...x, item])}>{include.includes(item) ? '✓ ' : ''}{item}</button>)}</div><div className="export-submit"><span>Estimated size: <b>{(include.length * .34).toFixed(1)} GB</b> · Estimated ready: ~45 minutes · Delivered to {tenant.email}</span><Button primary onClick={requestExport}><Download size={15} /> Request export</Button></div></div><DataTable headers={['REQUESTED', 'TYPE / RANGE', 'REQUESTED BY', 'SIZE', 'STATUS', 'ACTION']}>{exports.map((e, i) => <tr key={e.requested}><td>{e.requested}</td><td>{e.type}</td><td>{e.by}</td><td>{e.size}</td><td><Pill tone={e.status === 'Ready' ? 'green' : e.status === 'Queued' ? 'blue' : 'gray'}>{e.status === 'Ready' ? '✓ ' : '◐ '}{e.status}</Pill></td><td><Button onClick={() => flash(e.status === 'Ready' ? 'Secure download would open here.' : 'Export re-requested.')}>{e.status === 'Ready' ? '↓ Download (60hr left)' : 'Re-request'}</Button></td></tr>)}</DataTable></Panel>
       <Panel num="10" title="Team & access — who at Luxe can log in" actions={<><Button><FileText size={15} /> View audit log</Button><Button primary><Plus size={15} /> Invite team member</Button></>}><div className="owner-warning">⚠ <div><b>Owner-only section</b><p>Only Owner/Admin users can change team roles. Marcus J. Reyes is the current designated administrator; transfers require FieldLoop Support verification.</p></div></div><Team /><Permissions /><div className="policy-grid">{[['PASSWORD MINIMUM', '12 characters + complexity'], ['MFA REQUIREMENT', 'Required · TOTP or biometric'], ['SESSION TIMEOUT', '20 min idle · 8 hr max'], ['PASSWORD ROTATION', '90 days · admin can enforce'], ['FAILED LOGIN LOCKOUT', '5 attempts · 15 min lockout'], ['SUSPICIOUS LOGIN ALERTS', 'Owner notified via SMS']].map(([a,b]) => <div key={a}><label>{a}</label><span>{b}</span></div>)}</div></Panel>
+      <Panel num="11" title="Knowledge Base — submit a fact" actions={<span className="muted">Reviewed by FieldLoop before it's searchable</span>}><KnowledgeBaseSubmission flash={flash} /></Panel>
       <footer><Button><Download size={15} /> Export dashboard view</Button><Button>? Contact support</Button><Button primary disabled>✓ All caught up</Button></footer>
     </main></div>
     {showAddTechModal && <AddTechnicianModal onClose={() => setShowAddTechModal(false)} onSuccess={(msg, notice) => { flash(msg); if (notice) setModalNotice(notice); loadTechs(); }} />}
@@ -338,6 +405,7 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
       onClose={() => { setShowCreateJobModal(false); setVoiceJobSeed(null); }}
       onSuccess={(msg) => { flash(msg); loadJobs(selectedDate); setVoiceJobSeed(null); }}
     />}
+    {viewingJobFileId && <JobFileModal jobId={viewingJobFileId} onClose={() => setViewingJobFileId(null)} />}
   </div>;
 }
 
@@ -1007,6 +1075,124 @@ function ConfirmModal({ title, message, confirmLabel = 'Confirm', onCancel, onCo
   );
 }
 
+// Human-readable labels for field_events.event_type values actually
+// produced by the technician mobile app (see get-job-file/index.js) —
+// 'gps_arrive' and 'photo' are the two in real use as of this writing, the
+// others are the mobile team's own documented vocabulary (MOBILE_TEAM_
+// HANDOFF.md) for events not yet observed live.
+const FIELD_EVENT_LABELS = {
+  gps_arrive: 'GPS · Geofence arrival',
+  gps_depart: 'GPS · Geofence departure',
+  manual_arrive: 'Manual "I\'ve arrived" (geofence failsafe)',
+  photo: 'Photo captured',
+  voice_note: 'Voice note',
+  status_change: 'Job status change',
+  job_timer_start: 'Labor clock started',
+  job_timer_stop: 'Labor clock stopped',
+};
+
+function JobFileModal({ jobId, onClose }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api.getJobFile(jobId)
+      .then((res) => { if (!cancelled) setData(res); })
+      .catch((err) => { if (!cancelled) setError(err.message || 'Failed to load job file.'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [jobId]);
+
+  const job = data?.job;
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '640px' }}>
+        <div className="modal-header">
+          <h3>Job file{job ? ` — ${job.job_id_public}` : ''}</h3>
+          <button className="modal-close" type="button" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body">
+          {loading && <div className="loading-roster">Loading job file…</div>}
+          {error && <div className="tech-error-banner">{error}</div>}
+          {job && <>
+            <p style={{ margin: '0 0 4px', fontWeight: 700 }}>{job.customers?.household_name || 'Unknown customer'}</p>
+            <p style={{ margin: '0 0 4px', color: '#64748b', fontSize: '13px' }}>{job.service_address}</p>
+            <p style={{ margin: '0 0 16px', color: '#64748b', fontSize: '13px' }}>
+              {(job.trade_category || job.job_type || '').toUpperCase()} · <Status color={jobStatusColor(job.status)}>{(job.status || '').replace('_', ' ')}</Status>
+              {job.technicians?.full_name ? ` · ${job.technicians.full_name}` : ''}
+            </p>
+            {data.events.length === 0 ? (
+              <div className="loading-roster">
+                No field events recorded for this job yet. Events (arrival, photos, status changes) are logged by the technician's mobile app while they're on the job.
+              </div>
+            ) : (
+              <div className="field-event-list">
+                {data.events.map((e) => (
+                  <div className="field-event" key={e.id}>
+                    <time>{new Date(e.event_ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time>
+                    <Activity size={17} />
+                    <div>
+                      <label>{FIELD_EVENT_LABELS[e.event_type] || e.event_type}{e.technician_name ? ` · ${e.technician_name}` : ''}</label>
+                      {e.transcript && <p>{e.transcript}</p>}
+                      {e.s3_object_key && <p>{e.s3_object_key.split('/').pop()}</p>}
+                    </div>
+                    <span />
+                  </div>
+                ))}
+              </div>
+            )}
+          </>}
+        </div>
+        <div className="modal-footer">
+          <Button type="button" onClick={onClose}>Close</Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Read-only card for every estimate/change order — the contractor's only
+// real action is approving or rejecting one the customer has already
+// signed (see update-estimate/index.js). Drafting, editing, and sending to
+// the customer all happen on the technician's mobile app, not here.
+function EstimateCard({ estimate, flash, onApprove, onReject }) {
+  const [busy, setBusy] = useState(false);
+
+  const run = async (fn) => {
+    setBusy(true);
+    try { await fn(); } catch (err) { flash(err.message || 'Action failed.'); } finally { setBusy(false); }
+  };
+
+  const customerName = estimate.job?.customers?.household_name || 'Unknown customer';
+  const jobLabel = estimate.job ? `${estimate.job.job_id_public} · ${estimate.job.description || estimate.job.job_type}` : 'Job no longer exists';
+  const isChangeOrder = estimate.doc_type === 'change_order';
+  const awaitingDecision = estimate.status === 'signed';
+  const statusTone = estimate.status === 'approved' ? 'green' : estimate.status === 'rejected' ? 'gray' : awaitingDecision ? 'amber' : 'blue';
+
+  const tierValues = [
+    estimate.tier_good != null ? `GOOD|$${Number(estimate.tier_good).toLocaleString()}` : null,
+    estimate.tier_better != null ? `BETTER|$${Number(estimate.tier_better).toLocaleString()}` : null,
+    estimate.tier_best != null ? `BEST|$${Number(estimate.tier_best).toLocaleString()}` : null,
+  ].filter(Boolean);
+
+  return (
+    <article className={`approval-card ${awaitingDecision ? 'warning' : 'draft'}`}>
+      <div>
+        <h3>{isChangeOrder ? '⚠' : '✎'} {isChangeOrder ? 'Change order' : 'Estimate'} — {jobLabel} <Pill tone={statusTone}>{estimate.status.toUpperCase()}</Pill></h3>
+        <p>{customerName}{estimate.created_at ? ` · ${new Date(estimate.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}</p>
+        {tierValues.length > 0 ? <Stats values={tierValues} /> : <p style={{ color: '#94a3b8' }}>No price entered yet.</p>}
+        {awaitingDecision && <div className="right-actions">
+          <Button disabled={busy} onClick={() => run(() => onReject(estimate.id))}>Reject</Button>
+          <Button primary disabled={busy} onClick={() => run(() => onApprove(estimate.id))}><Check size={15} /> Approve & bill</Button>
+        </div>}
+      </div>
+    </article>
+  );
+}
+
 // jobs.job_type CHECK constraint — verified live via probe-insert against
 // the real DB this session; 'service_call' is the only value currently
 // valid (see backend/functions/create-job/index.js for the full list of
@@ -1524,9 +1710,162 @@ function CreateJobModal({ customers, technicians, initialData, flaggedFields, on
 function Stats({ values }) { return <div className="stats">{values.map(value => { const [label, item] = value.split('|'); return <div key={label}><label>{label}</label><b>{item}</b></div>; })}</div>; }
 function Avatar({ name }) { return <span className="avatar">{initials(name)}</span>; }
 function DataTable({ headers, children }) { return <div className="table-wrap"><table><thead><tr>{headers.map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{children}</tbody></table></div>; }
-function Invoices({ flash }) { const [invoices, setInvoices] = useState([{ no: 'INV-2841', customer: 'Delgado, R.', job: 'FL-2831 Kitchen (Ph 2)', amount: '$8,400', method: 'Stripe CC', fee: '$163.80', status: '✓ Paid — 07/19' }, { no: 'INV-2844', customer: 'Chen, L.', job: 'FL-2848 Tile repair', amount: '$845', method: 'Pending — CC on file', fee: '$16.48 est.', status: '◐ Invoiced 07/20' }, { no: 'INV-2845', customer: 'Delgado, R.', job: 'FL-2849 Kitchen (Ph 3)', amount: '$11,635', method: 'Awaiting invoice', fee: '$226.88 est.', status: 'Draft' }]); return <DataTable headers={['INVOICE #', 'CUSTOMER', 'JOB', 'AMOUNT', 'PAYMENT METHOD', 'PLATFORM FEE', 'STATUS', 'ACTIONS']}>{invoices.map((x, i) => <tr key={x.no}><td>{x.no}</td><td>{x.customer}</td><td>{x.job}</td><td><b>{x.amount}</b></td><td>{x.method}</td><td>{x.fee}</td><td><Pill tone={x.status.includes('Paid') ? 'green' : x.status.includes('Invoiced') ? 'blue' : 'gray'}>{x.status}</Pill></td><td><Button onClick={() => { if (x.status === 'Draft') setInvoices(items => items.map((z, n) => n === i ? { ...z, status: '◐ Invoiced 07/21' } : z)); flash(x.status === 'Draft' ? 'Invoice completed.' : 'Payment reminder queued.'); }}>{x.status === 'Draft' ? 'Complete' : x.status.includes('Invoiced') ? 'Send reminder' : 'View'}</Button></td></tr>)}</DataTable>; }
+const INVOICE_PAYMENT_METHODS = [{ value: 'stripe_cc', label: 'Stripe (Card)' }, { value: 'ach', label: 'ACH' }, { value: 'check', label: 'Check' }, { value: 'cash', label: 'Cash' }];
+
+// Purely read-only — invoices are compiled and collected on by the
+// technician's mobile app + Stripe Connect (HANDOFF.md §11.3, Beat 7), not
+// created, edited, or sent from this dashboard.
+function InvoiceRow({ invoice }) {
+  const customerName = invoice.job?.customers?.household_name || 'Unknown customer';
+  const jobLabel = invoice.job ? `${invoice.job.job_id_public} ${invoice.job.description || invoice.job.job_type || ''}`.trim() : 'Job no longer exists';
+
+  return (
+    <tr>
+      <td>{invoice.invoice_number || '—'}</td>
+      <td>{customerName}</td>
+      <td>{jobLabel}</td>
+      <td><b>${Number(invoice.total).toLocaleString()}</b></td>
+      <td>{invoice.payment_method ? INVOICE_PAYMENT_METHODS.find(m => m.value === invoice.payment_method)?.label || invoice.payment_method : invoice.status === 'draft' ? 'Not yet sent' : 'Awaiting payment'}</td>
+      <td>${Number(invoice.platform_fee).toFixed(2)}</td>
+      <td><Pill tone={invoice.status === 'paid' ? 'green' : invoice.status === 'invoiced' ? 'blue' : 'gray'}>{invoice.status === 'paid' ? '✓ Paid' : invoice.status === 'invoiced' ? '◐ Invoiced' : 'Draft'}</Pill></td>
+    </tr>
+  );
+}
+
+function Invoices({ invoices, loading }) {
+  if (loading) return <div className="loading-roster">Loading invoices…</div>;
+  if (!invoices || invoices.length === 0) return <div className="loading-roster">No invoices yet — these are compiled and sent by the technician from the field, not from this dashboard.</div>;
+  return <DataTable headers={['INVOICE #', 'CUSTOMER', 'JOB', 'AMOUNT', 'PAYMENT METHOD', 'PLATFORM FEE', 'STATUS']}>
+    {invoices.map(inv => <InvoiceRow key={inv.id} invoice={inv} />)}
+  </DataTable>;
+}
 function Reports() { const efficiency = [['Taylor R.', 133], ['Miguel S.', 118], ['Devon W.', 104], ['Ben N.', 100], ['Jake A.', 85], ['Chris D.', 74], ['Raul O. (apprentice)', 58]]; return <div className="reports"><article><h3>Technician efficiency <small>Flat-rate billed vs. GPS-clocked · last 30 days</small></h3>{efficiency.map(([name, pct]) => <div className="bar-row" key={name}><span>{name}</span><div><i className={pct >= 100 ? 'green' : pct >= 75 ? 'amber' : 'red'} style={{ width: `${Math.min(pct / 150 * 100, 100)}%` }} /></div><b className={pct >= 100 ? 'green' : pct >= 75 ? 'amber' : 'red'}>{pct}%</b></div>)}</article><article><h3>Unapplied Time (Labor Bleed) <small>last 30 days</small></h3><strong className="big-stat">47.5 hrs</strong><p>~$4,512 in unbilled labor · 6.8% of total tech hours</p>{[['Waiting on parts delivery', '21.0 hrs'], ['Customer approval delays', '14.5 hrs'], ['Rework / callbacks', '7.5 hrs'], ['Weather / unscheduled', '4.5 hrs']].map(x => <div className="simple-row" key={x[0]}><span>{x[0]}</span><b>{x[1]}</b></div>)}</article><article><h3>Fleet Health — OBD-II Monitoring</h3>{fleet.map(v => <div className="simple-row" key={v.unit}><Status color={v.color}>{v.unit} · {v.vehicle.split(' ').slice(1).join(' ')}</Status><b className={v.color}>{v.color === 'green' ? 'HEALTHY' : v.color === 'amber' ? 'SERVICE SOON' : 'DIAGNOSE'}</b></div>)}</article></div>; }
 function Retention({ paused, setPaused }) { const rows = [['TODAY', 'Delgado, R. — Day-1 review request · FL-2831', 'Queued 5:00 PM'], ['TOMORROW', 'Whitfield, K. — Day-1 review request · FL-2830', 'Queued 4:00 PM'], ['JUL 24', 'Anderson, S. — 3-month check-in · FL-2778', 'Queued'], ['AUG 04', 'Ramos, J. — 12-month anniversary · FL-2612', 'Queued']]; return <article className="retention"><h3>Retention queue — automated customer follow-ups</h3>{rows.map(([date, description, time], i) => <div key={date}><Pill tone="gray">{date}</Pill><span>{description}</span><small>{paused.includes(i) ? 'Paused' : time}</small><Button onClick={() => setPaused(p => p.includes(i) ? p.filter(x => x !== i) : [...p, i])}>{paused.includes(i) ? 'Resume' : 'Pause'}</Button></div>)}</article>; }
 function Team() { const team = [['Marcus J. Reyes', 'marcus@luxerenovationsrq.com', 'Owner / Admin', 'Today · 8:12 AM'], ['Diana Reyes', 'diana@luxerenovationsrq.com', 'Office Mgr / Dispatcher', 'Today · 7:48 AM'], ['Sofia Gonzalez', 'sofia@luxerenovationsrq.com', 'Bookkeeper / AP', 'Yesterday · 4:31 PM'], ['Tyler Brooks', 'tyler@luxerenovationsrq.com', 'Field Ops Lead', 'Today · 6:52 AM'], ['9× Technicians', 'Individual mobile logins', 'Technician (mobile only)', 'Various']]; return <DataTable headers={['TEAM MEMBER', 'EMAIL', 'ROLE', 'MFA', 'LAST LOGIN', 'ACTIONS']}>{team.map((t, i) => <tr key={t[0]}><td><Avatar name={t[0]} /> {t[0]}</td><td>{t[1]}</td><td><Pill tone={i === 0 ? 'green' : i === 1 ? 'blue' : i === 2 ? 'purple' : 'amber'}>{t[2]}</Pill></td><td><Status>✓ {i === 4 ? 'Biometric' : 'TOTP'}</Status></td><td>{t[3]}</td><td><Button>Edit</Button>{i > 0 && i < 4 && <Button>Remove</Button>}{i === 4 && <Button>Manage</Button>}</td></tr>)}</DataTable>; }
 function Permissions() { const rows = [['Owner/Admin (Marcus)', '✓ Full', '✓ Approve', '✓ Full', '✓ Full', '✓ Manage', '✓ Request', '✓ Full'], ['Office Mgr/Dispatcher', '✓ Full', '◐ Send only', '◐ View only', '✓ Full', '✕ No', '◐ Request', '✕ No'], ['Bookkeeper/AP', '◐ View only', '◐ View only', '✓ Full', '◐ Billing only', '✕ No', '✓ Request', '✕ No'], ['Field Ops Lead', '◐ Assign techs', '◐ Create only', '✕ No', '◐ Contact only', '✕ No', '✕ No', '✕ No']]; return <div className="permissions"><h3>Role permissions matrix</h3><DataTable headers={['ROLE AT LUXE', 'JOBS & DISPATCH', 'ESTIMATES', 'INVOICES', 'CUSTOMER PII', 'TEAM & ACCESS', 'DATA ARCHIVE', 'COMPANY SETTINGS']}>{rows.map(row => <tr key={row[0]}>{row.map((cell, i) => <td key={i}>{cell}</td>)}</tr>)}</DataTable></div>; }
+
+const KB_SUBMISSION_STATUS_TONE = { pending: 'amber', approved: 'green', rejected: 'gray', superseded: 'gray' };
+
+function KnowledgeBaseSubmission({ flash }) {
+  const [trades, setTrades] = useState([]);
+  const [tradesLoading, setTradesLoading] = useState(true);
+  const [submissions, setSubmissions] = useState(null);
+  const [submissionsLoading, setSubmissionsLoading] = useState(true);
+  const [tradeSlug, setTradeSlug] = useState('');
+  const [subcategoryName, setSubcategoryName] = useState('');
+  const [categoryName, setCategoryName] = useState('');
+  const [factTitle, setFactTitle] = useState('');
+  const [fact, setFact] = useState('');
+  const [topicTags, setTopicTags] = useState('');
+  const [verifyLocally, setVerifyLocally] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  const loadSubmissions = useCallback(() => {
+    setSubmissionsLoading(true);
+    api.listMyKbSubmissions().then(setSubmissions).catch(() => {}).finally(() => setSubmissionsLoading(false));
+  }, []);
+
+  useEffect(() => {
+    api.listKbTrades().then(setTrades).catch(() => {}).finally(() => setTradesLoading(false));
+    loadSubmissions();
+  }, [loadSubmissions]);
+
+  const selectedTrade = trades.find(t => t.slug === tradeSlug);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!tradeSlug) { setError('Choose a trade.'); return; }
+    if (!subcategoryName.trim() || !categoryName.trim()) { setError('Subcategory and category are both required.'); return; }
+    if (!factTitle.trim() || !fact.trim()) { setError('Fact title and the fact itself are both required.'); return; }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await api.submitKbEntry({
+        trade_slug: tradeSlug,
+        subcategory_name: subcategoryName.trim(),
+        category_name: categoryName.trim(),
+        fact_title: factTitle.trim(),
+        fact: fact.trim(),
+        topic_tags: topicTags,
+        verify_locally: verifyLocally,
+      });
+      flash(res.message || 'Submitted for review.');
+      setSubcategoryName(''); setCategoryName(''); setFactTitle(''); setFact(''); setTopicTags(''); setVerifyLocally(false);
+      loadSubmissions();
+    } catch (err) {
+      setError(err.message || 'Failed to submit.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div>
+      <p style={{ color: '#64748b', fontSize: '13px', margin: '0 0 16px' }}>
+        Know something every technician on a job like this should know? Submit it here — a FieldLoop reviewer approves it before it shows up in Knowledge Base search results for your team.
+      </p>
+      <form onSubmit={handleSubmit}>
+        {error && <div className="tech-error-banner">{error}</div>}
+        <div className="tech-form-grid">
+          <div className="tech-form-group">
+            <label>Trade</label>
+            <select value={tradeSlug} onChange={e => setTradeSlug(e.target.value)} disabled={tradesLoading}>
+              <option value="">{tradesLoading ? 'Loading trades…' : 'Select a trade…'}</option>
+              {trades.map(t => <option key={t.slug} value={t.slug}>{t.name}</option>)}
+            </select>
+          </div>
+          <div className="tech-form-group">
+            <label>Subcategory</label>
+            <input list="kb-subcat-options" value={subcategoryName} onChange={e => setSubcategoryName(e.target.value)} placeholder="e.g. Driveway Concrete" />
+            <datalist id="kb-subcat-options">{(selectedTrade?.subcategories || []).map(s => <option key={s.slug} value={s.name} />)}</datalist>
+          </div>
+        </div>
+        <div className="tech-form-group full-width">
+          <label>Category</label>
+          <input value={categoryName} onChange={e => setCategoryName(e.target.value)} placeholder="e.g. Subgrade & Base Prep" />
+        </div>
+        <div className="tech-form-group full-width">
+          <label>Fact title</label>
+          <input value={factTitle} onChange={e => setFactTitle(e.target.value)} placeholder="Short, specific title" />
+        </div>
+        <div className="tech-form-group full-width">
+          <label>Fact</label>
+          <textarea value={fact} onChange={e => setFact(e.target.value)} placeholder="The fact itself, written plainly — this is what gets shown to a technician who asks about it." />
+        </div>
+        <div className="tech-form-grid">
+          <div className="tech-form-group">
+            <label>Topic tags (comma-separated, optional)</label>
+            <input value={topicTags} onChange={e => setTopicTags(e.target.value)} placeholder="e.g. subgrade, compaction" />
+          </div>
+          <div className="tech-form-group">
+            <label>Varies by local jurisdiction?</label>
+            <select value={verifyLocally ? 'yes' : 'no'} onChange={e => setVerifyLocally(e.target.value === 'yes')}>
+              <option value="no">No</option>
+              <option value="yes">Yes — flag for local verification</option>
+            </select>
+          </div>
+        </div>
+        <div className="right-actions">
+          <Button type="submit" primary disabled={submitting}>{submitting ? 'Submitting…' : 'Submit for review'}</Button>
+        </div>
+      </form>
+
+      <h3 style={{ marginTop: '28px' }}>Your submissions</h3>
+      {submissionsLoading ? <div className="loading-roster">Loading…</div> : !submissions || submissions.length === 0 ? <div className="loading-roster">Nothing submitted yet.</div> : (
+        <DataTable headers={['FACT', 'TRADE', 'CATEGORY', 'STATUS', 'SUBMITTED']}>
+          {submissions.map(s => (
+            <tr key={s.id}>
+              <td>{s.fact_title}</td>
+              <td>{s.kb_trades?.name || '—'}</td>
+              <td>{s.kb_categories?.name || '—'}</td>
+              <td><Pill tone={KB_SUBMISSION_STATUS_TONE[s.status] || 'gray'}>{s.status}</Pill></td>
+              <td>{new Date(s.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+            </tr>
+          ))}
+        </DataTable>
+      )}
+    </div>
+  );
+}
 
