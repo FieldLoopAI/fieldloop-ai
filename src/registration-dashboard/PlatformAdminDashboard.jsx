@@ -26,6 +26,99 @@ const CONTRACTOR_STATUS_TONE = { active: 'green', pending: 'blue', suspended: 'a
 
 const TABS = ['Overview', 'Contractors', 'Usage', 'Revenue', 'Knowledge Base'];
 
+// ---- Chart color tokens (dataviz skill) ----
+// Contractor status is real state, not arbitrary series identity, so it wears
+// the fixed status scale (good/warning/critical) rather than the categorical
+// theme — active=good, suspended=warning, terminated=critical. 'pending' and
+// 'no_status' aren't good/bad, so they stay off the status scale entirely:
+// pending takes the categorical slot-1 hue (neutral-informational), no_status
+// (a data-quality gap, not a real business state) stays a plain muted gray.
+const CONTRACTOR_STATUS_CHART_COLORS = { active: '#0ca30c', suspended: '#fab219', terminated: '#d03b3b', pending: '#2a78d6', no_status: '#c3c2b7' };
+const CONTRACTOR_STATUS_LABELS = { active: 'Active', pending: 'Pending', suspended: 'Suspended', terminated: 'Terminated', no_status: 'No status row' };
+const CONTRACTOR_STATUS_ORDER = ['active', 'pending', 'suspended', 'terminated', 'no_status'];
+
+// jobs.status has a real lifecycle order (verified live via probe-insert —
+// see HANDOFF.md §3/§12), so it's ordinal, not nominal: one hue, monotone
+// lightness by stage, per the dataviz skill's ordinal ramp (light-mode floor
+// is step 250 — palette.md).
+const JOB_LIFECYCLE = ['draft', 'scheduled', 'en_route', 'on_site', 'complete', 'closed', 'invoiced', 'paid'];
+const JOB_LIFECYCLE_RAMP = ['#86b6ef', '#6da7ec', '#5598e7', '#3987e5', '#2a78d6', '#256abf', '#184f95', '#0d366b'];
+const JOB_STATUS_LABELS = { draft: 'Draft', scheduled: 'Scheduled', en_route: 'En route', on_site: 'On site', complete: 'Complete', closed: 'Closed', invoiced: 'Invoiced', paid: 'Paid' };
+
+// KB trades are nominal (no natural order) with one series (fact count), so
+// every bar takes the same categorical slot-1 hue — magnitude is bar length,
+// never bar color (coloring nominal bars by value double-encodes and is a
+// documented anti-pattern).
+const CATEGORICAL_SLOT_1 = '#2a78d6';
+
+function ChartHoverable({ children, tooltip, style, className = '' }) {
+  return (
+    <div className={`chart-hoverable ${className}`} style={style} tabIndex={0}>
+      {children}
+      <div className="chart-tooltip">{tooltip}</div>
+    </div>
+  );
+}
+
+// Part-to-whole job → a stacked bar, not a donut (a pie/donut is the wrong
+// form here per the dataviz skill's form table; also avoids a 5-slice pie).
+function StatusStackedBar({ byStatus }) {
+  const present = CONTRACTOR_STATUS_ORDER.filter((k) => byStatus[k] > 0);
+  const total = present.reduce((s, k) => s + byStatus[k], 0) || 1;
+  if (present.length === 0) return <div className="loading-roster">No contractors yet.</div>;
+  return (
+    <div>
+      <div className="stacked-bar">
+        {present.map((k) => (
+          <ChartHoverable
+            key={k}
+            style={{ flexGrow: byStatus[k], flexBasis: 0, minWidth: '3px' }}
+            tooltip={<><b>{byStatus[k]} contractor{byStatus[k] === 1 ? '' : 's'}</b><span>{CONTRACTOR_STATUS_LABELS[k]} · {Math.round((byStatus[k] / total) * 100)}%</span></>}
+          >
+            <div className="stacked-bar-segment" style={{ width: '100%', height: '100%', background: CONTRACTOR_STATUS_CHART_COLORS[k] }} />
+          </ChartHoverable>
+        ))}
+      </div>
+      <div className="chart-legend">
+        {present.map((k) => (
+          <span className="chart-legend-item" key={k}>
+            <span className="chart-legend-swatch" style={{ background: CONTRACTOR_STATUS_CHART_COLORS[k] }} />
+            {CONTRACTOR_STATUS_LABELS[k]} ({byStatus[k]})
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Reusable horizontal bar chart — used both for the ordinal job-lifecycle
+// chart (colorFor returns a ramp step per stage) and the nominal KB-coverage
+// chart (colorFor returns the same slot-1 hue for every bar).
+function HorizontalBarChart({ items, colorFor, formatValue }) {
+  const max = Math.max(1, ...items.map((i) => i.value));
+  return (
+    <div className="hbar-chart">
+      {items.map((item) => (
+        <div className="chart-hoverable hbar-row" tabIndex={0} key={item.key}>
+          <span className="hbar-label">{item.label}</span>
+          <div className="hbar-track">
+            <div className="hbar-fill" style={{ width: item.value === 0 ? 0 : `${Math.max(2, (item.value / max) * 100)}%`, background: colorFor(item) }} />
+          </div>
+          <span className="hbar-value">{formatValue ? formatValue(item.value) : item.value}</span>
+          <div className="chart-tooltip"><b>{formatValue ? formatValue(item.value) : item.value}</b><span>{item.label}</span></div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SkeletonKpiRow() {
+  return <div className="skeleton-kpi-row">{[1, 2, 3, 4, 5].map((i) => <div className="skeleton skeleton-kpi" key={i} />)}</div>;
+}
+function SkeletonLines({ count = 4 }) {
+  return <div className="skeleton-lines">{Array.from({ length: count }, (_, i) => <div className="skeleton skeleton-line" key={i} />)}</div>;
+}
+
 // Sortable column header — clicking toggles asc/desc/off. Kept local since
 // there's only one sortable table on this page today.
 function SortableHeader({ label, sortKey, sort, setSort }) {
@@ -132,7 +225,7 @@ export default function PlatformAdminDashboard({ staffUser, onLogout }) {
           {overviewError && <div className="tech-error-banner">{overviewError}</div>}
 
           {/* ---- Tab 1: Overview ---- */}
-          {overviewLoading ? <div className="loading-roster">Loading platform overview…</div> : overview && (
+          {overviewLoading ? <><SkeletonKpiRow /><div className="dash-panel section-1"><SkeletonLines count={3} /></div></> : overview && (
             <>
               <div className="kpi-grid">
                 <KpiCard label="TOTAL CONTRACTORS" value={overview.contractors.total} sub={`${overview.contractors.by_status.active} active · ${overview.contractors.by_status.pending} pending`} color="green" />
@@ -141,6 +234,10 @@ export default function PlatformAdminDashboard({ staffUser, onLogout }) {
                 <KpiCard label="JOBS (ALL TIME)" value={overview.jobs.total} sub={Object.entries(overview.jobs.by_status).map(([s, n]) => `${n} ${s}`).join(' · ') || 'none yet'} />
                 <KpiCard label="REVENUE COLLECTED" value={money(overview.revenue.collected_total)} sub={overview.revenue.paid_count === 0 ? 'No billing activity yet' : `${overview.revenue.paid_count} paid invoices`} color={overview.revenue.collected_total > 0 ? 'green' : undefined} />
               </div>
+
+              <Panel section="1" title="Contractor status">
+                <StatusStackedBar byStatus={overview.contractors.by_status} />
+              </Panel>
 
               <Panel section="1" title="Needs attention">
                 {alerts.length === 0 ? <div className="loading-roster">Nothing flagged right now.</div> : (
@@ -178,7 +275,7 @@ export default function PlatformAdminDashboard({ staffUser, onLogout }) {
             <div className="search" style={{ marginBottom: '14px' }}>
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, ID, or trade" />
             </div>
-            {contractorsLoading ? <div className="loading-roster">Loading contractors…</div> : filteredContractors.length === 0 ? (
+            {contractorsLoading ? <SkeletonLines count={6} /> : filteredContractors.length === 0 ? (
               <div className="loading-roster">No contractors match "{search}".</div>
             ) : (
               <DataTable headers={[
@@ -230,15 +327,19 @@ export default function PlatformAdminDashboard({ staffUser, onLogout }) {
           )}
 
           {/* ---- Tab 3: Usage ---- */}
-          {overviewLoading ? <div className="loading-roster">Loading usage…</div> : overview && (
+          {overviewLoading ? <div className="dash-panel section-3"><SkeletonLines count={5} /></div> : overview && (
             <>
-              <Panel section="3" title="Jobs by status (all contractors)">
+              <Panel section="3" title="Jobs by status (all contractors)" actions={<span className="muted">Ordered by real lifecycle stage</span>}>
+                <HorizontalBarChart
+                  items={JOB_LIFECYCLE.map((s) => ({ key: s, label: JOB_STATUS_LABELS[s], value: overview.jobs.by_status[s] || 0 }))}
+                  colorFor={(item) => JOB_LIFECYCLE_RAMP[JOB_LIFECYCLE.indexOf(item.key)]}
+                />
                 <DataTable headers={['STATUS', 'COUNT']}>
                   {Object.entries(overview.jobs.by_status).map(([s, n]) => <tr key={s}><td>{s}</td><td>{n}</td></tr>)}
                 </DataTable>
               </Panel>
               <Panel section="3" title="Most active contractors (by job count)">
-                {contractorsLoading ? <div className="loading-roster">Loading…</div> : (
+                {contractorsLoading ? <SkeletonLines count={4} /> : (
                   <DataTable headers={['CONTRACTOR', 'JOBS', 'ACTIVE TECHS']}>
                     {mostActiveContractors.map((c) => (
                       <tr key={c.id} onClick={() => navigate(`/staff/platform/contractors/${c.id}`)} style={{ cursor: 'pointer' }} className="clickable-row">
@@ -267,6 +368,10 @@ export default function PlatformAdminDashboard({ staffUser, onLogout }) {
           {/* ---- Tab 5: Knowledge Base ---- */}
           {overview && (
             <Panel section="5" title="Knowledge Base content coverage">
+              <HorizontalBarChart
+                items={overview.kb.trade_content_coverage.map((t) => ({ key: t.slug, label: t.name, value: t.approved_facts }))}
+                colorFor={() => CATEGORICAL_SLOT_1}
+              />
               <DataTable headers={['TRADE', 'APPROVED FACTS']}>
                 {overview.kb.trade_content_coverage.map((t) => (
                   <tr key={t.slug}><td>{t.name}</td><td>{t.approved_facts === 0 ? <span className="muted">No content yet</span> : t.approved_facts}</td></tr>
@@ -275,7 +380,7 @@ export default function PlatformAdminDashboard({ staffUser, onLogout }) {
             </Panel>
           )}
           <Panel section="5" title="Pending contractor submissions" actions={<Pill tone="amber">{submissions?.length ?? 0} pending</Pill>}>
-            {submissionsLoading ? <div className="loading-roster">Loading…</div> : !submissions || submissions.length === 0 ? <div className="loading-roster">Nothing pending review.</div> : (
+            {submissionsLoading ? <SkeletonLines count={3} /> : !submissions || submissions.length === 0 ? <div className="loading-roster">Nothing pending review.</div> : (
               <DataTable headers={['FACT', 'TRADE / CATEGORY', 'SUBMITTED BY', 'SUBMITTED', 'ACTIONS']}>
                 {submissions.map((s) => (
                   <tr key={s.id}>

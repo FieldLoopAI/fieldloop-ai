@@ -953,8 +953,40 @@ The first version of §24 shipped everything as one long scroll of panels — no
 
 ### 25.4 Explicitly deferred (not built this pass)
 
-Charts/data-visualization — flagged in the original plan as a real open decision (hand-rolled SVG, matching this codebase's zero-new-dependency pattern so far, vs. a small charting library for faster/better results) that wasn't resolved before "go ahead," so it was held for a later pass per the agreed phasing (structure → drill-down → visualization → polish) rather than guessed at. Loading-skeleton/hover-polish pass also deferred per the same phasing.
+Charts/data-visualization — flagged in the original plan as a real open decision (hand-rolled SVG, matching this codebase's zero-new-dependency pattern so far, vs. a small charting library for faster/better results) that wasn't resolved before "go ahead," so it was held for a later pass per the agreed phasing (structure → drill-down → visualization → polish) rather than guessed at. Loading-skeleton/hover-polish pass also deferred per the same phasing. **Both built in §26, the very next pass.**
 
 ### Files
 `backend/functions/get-platform-contractor-usage/` (new Lambda, deployed); `backend/functions/package-lambda.ps1` (`ValidateSet` updated); `src/registration-dashboard/PlatformAdminDashboard.jsx` (rewritten — real `activeTab` state + 5-tab sidebar, sortable contractor table via `SortableHeader`, clickable rows, alert strip); `src/registration-dashboard/PlatformContractorDetail.jsx` (new — the drill-down page); `src/App.jsx` (`/staff/platform/contractors/:id` route, admin-only via new `PlatformContractorSection`); `src/shared/services/api.js` (`getPlatformContractorUsage` added); `src/command-dashboard/dashboard.css` (`.clickable-row:hover` added).
+
+---
+
+## 26. Platform Overview polish — hand-rolled charts + loading skeletons (2026-08-17)
+
+The two items deferred at the end of §25 (§25.4). Two decisions confirmed with the user before building: hand-rolled SVG/HTML charts (no new frontend dependency — this project has never had a charting library, confirmed by checking `package.json`), and both charts and loading/hover polish in one pass rather than splitting them.
+
+### 26.1 Design method
+
+Built following this workspace's `dataviz` skill rather than styling charts by eye — the skill's procedure (pick the form → assign color by job → validate → mark specs → hover layer → accessibility pass → look at the render) was followed in order, form chosen before color, color last:
+
+- **Contractor status** (active/pending/suspended/terminated/no_status) is a part-to-whole job → a **horizontal stacked bar**, not a donut/pie (the skill's form table explicitly rules out a donut/pie here — "part-to-whole → stacked bar", and separately flags a 2-slice pie as a straight anti-pattern). Colors come from the skill's **status** palette, not its categorical theme, because this data genuinely *is* state, not arbitrary series identity: active = good (`#0ca30c`), suspended = warning (`#fab219`), terminated = critical (`#d03b3b`). `pending` and `no_status` aren't good/bad, so they deliberately stay off the status scale — `pending` takes the categorical theme's slot-1 blue (neutral/informational), `no_status` (a data-quality gap, not a real business state) stays a plain muted gray. Segment widths use CSS `flex-grow` proportional to count, not manual percentage math.
+- **Jobs by status** is a magnitude-comparison job, but `jobs.status` has a real lifecycle order (verified live via probe-insert, §3/§12: draft → scheduled → en_route → on_site → complete → closed → invoiced → paid) — so it's **ordinal**, not nominal, and gets the skill's **ordinal ramp**: one hue (blue), monotone lightness by stage, using the palette's light-mode-floor-compliant steps (`#86b6ef` through `#0d366b`). All 8 lifecycle stages render every time, including the 5 currently at zero — an honest, complete funnel rather than only showing the 3 stages with real data today.
+- **KB content coverage by trade** is one series across nominal categories (trades have no natural order) → every bar takes the **same** categorical slot-1 hue (`#2a78d6`); magnitude is bar length only. Coloring nominal bars by their own value was explicitly avoided — the skill documents this as a real anti-pattern (it double-encodes bar length as hue and burns the identity channel on information the chart already shows).
+- **Hover tooltips**: value leads (bold), label follows (secondary/muted), per the skill's tooltip hierarchy — the opposite order from a legend. Implemented as pure CSS (`:hover`/`:focus-visible` on a `tabindex="0"` wrapper revealing an absolutely-positioned tooltip), so keyboard focus gets the identical tooltip to mouse hover with no extra JS state, and every chart sits directly beside (or above) the data table it summarizes — the skill's required "table view" twin already existed in every case, nothing new needed there.
+- Mark specs followed the skill's fixed table: bars have a 4px rounded end at the value tip, square at the baseline; stacked-bar segments are separated by a real 2px surface gap (not a border); gridless, hairline chrome only.
+- No categorical validator run was needed — none of the three charts assign a fresh multi-hue categorical palette (status colors are pre-validated and fixed per the skill's own rules; the two ordinal/single-hue charts are explicitly outside the categorical validator's scope, per the skill's own documentation of what it does and doesn't check).
+
+### 26.2 Loading skeletons
+
+`.loading-roster`, used everywhere on this page, turned out to have **zero CSS anywhere in the codebase** — confirmed by grep — meaning every "Loading…" state on both this page and the underlying pattern it copied from `ContractorCommandDashboard.jsx` was always just unstyled plain text. New `.skeleton`/`.skeleton-kpi-row`/`.skeleton-lines` classes (a CSS `@keyframes` opacity pulse, no JS animation) replace the plain text on the KPI row, the contractor roster table, the Usage/Overview panels, and the pending-KB-submissions list while their real requests are in flight.
+
+### 26.3 What was tested (real, live — not just code review)
+
+- Build/lint clean; zero new frontend dependencies added (confirmed against `package.json`).
+- Real browser (Playwright): screenshotted all three charts fully rendered with real data (the stacked bar's true 9/6/0/0/4 split; the ordinal ramp visibly lightening toward the earlier lifecycle stages; the KB single-hue bar showing the real 500/0/0/0 split) — checked against the skill's own "render it and look at it" step, not just trusted the code.
+- Hovered a live segment on the stacked bar and confirmed the tooltip rendered with the correct value-leads-label-follows hierarchy and the correct percentage.
+- Confirmed the loading skeleton actually renders, not just that the conditional logic looks right: throttled the network via a real CDP session immediately before navigating to the page and screenshotted mid-load — five pulsing KPI placeholders and panel skeleton lines, not blank space or a layout jump.
+- Zero console errors across every screenshot.
+
+### Files
+`src/command-dashboard/dashboard.css` (`.chart-tooltip`, `.chart-hoverable`, `.stacked-bar`/`.stacked-bar-segment`, `.chart-legend`, `.hbar-chart`/`.hbar-row`/`.hbar-track`/`.hbar-fill`, `.skeleton`/`.skeleton-kpi-row`/`.skeleton-lines` all added); `src/registration-dashboard/PlatformAdminDashboard.jsx` (`ChartHoverable`, `StatusStackedBar`, `HorizontalBarChart`, `SkeletonKpiRow`, `SkeletonLines` components added; wired into the Overview, Usage, and Knowledge Base tabs; every "Loading…" text state replaced with a skeleton).
 

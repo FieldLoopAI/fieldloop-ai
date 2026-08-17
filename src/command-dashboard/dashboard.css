@@ -9,6 +9,46 @@
 /* Clickable table rows (Platform Overview's contractor drill-down) */
 .clickable-row:hover{background:#f4faf7}
 
+/* Platform Overview — hand-rolled charts. Colors/specs follow this project's
+   dataviz skill: status tokens for real state (contractor status), a single
+   ordinal blue ramp for the real jobs.status lifecycle order, a single
+   categorical slot-1 hue for nominal one-series bars (KB trade coverage).
+   Every chart here sits beside an existing data table, which is the
+   accessible/table-view twin the skill requires — the chart never gates a
+   value that isn't also in a table nearby. */
+.chart-tooltip{position:absolute;bottom:calc(100% + 8px);left:0;background:#0b0b0b;color:#fff;padding:7px 10px;border-radius:7px;font-size:12px;line-height:1.4;opacity:0;visibility:hidden;transition:opacity .12s ease;pointer-events:none;white-space:nowrap;z-index:20;box-shadow:0 4px 12px rgba(0,0,0,.18)}
+.chart-tooltip b{display:block;font-size:13px;font-weight:700}
+.chart-tooltip span{display:block;color:#c3c2b7;font-size:11px;margin-top:1px}
+.chart-hoverable{position:relative;outline:none;border-radius:6px}
+.chart-hoverable:hover .chart-tooltip,.chart-hoverable:focus-visible .chart-tooltip{opacity:1;visibility:visible}
+.chart-hoverable:focus-visible{outline:2px solid #8be2bd;outline-offset:2px}
+
+.stacked-bar{display:flex;height:22px;gap:2px;background:#f7f8f9;border-radius:4px}
+.stacked-bar-segment{height:100%;transition:filter .12s}
+.stacked-bar .chart-hoverable:first-child .stacked-bar-segment{border-radius:4px 0 0 4px}
+.stacked-bar .chart-hoverable:last-child .stacked-bar-segment{border-radius:0 4px 4px 0}
+.stacked-bar .chart-hoverable:hover .stacked-bar-segment,.stacked-bar .chart-hoverable:focus-visible .stacked-bar-segment{filter:brightness(1.08)}
+.chart-legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px}
+.chart-legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:#425168}
+.chart-legend-swatch{width:10px;height:10px;border-radius:3px;flex-shrink:0}
+
+.hbar-chart{display:flex;flex-direction:column;gap:11px;margin-bottom:6px}
+.hbar-row{display:grid;grid-template-columns:130px 1fr 46px;align-items:center;gap:10px;padding:2px 0}
+.hbar-label{font-size:12px;color:#425168;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hbar-track{position:relative;height:16px;background:#f0f1f3;border-radius:0 4px 4px 0}
+.hbar-fill{height:100%;border-radius:0 4px 4px 0;transition:filter .12s}
+.hbar-row:hover .hbar-fill,.hbar-row:focus-visible .hbar-fill{filter:brightness(1.08)}
+.hbar-value{font-size:12px;color:#64748b;text-align:right;font-variant-numeric:tabular-nums}
+
+@keyframes skeleton-pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.skeleton{background:#e7e9ec;border-radius:6px;animation:skeleton-pulse 1.4s ease-in-out infinite}
+.skeleton-kpi-row{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px}
+.skeleton-kpi{height:96px;border-radius:12px}
+.skeleton-lines{display:flex;flex-direction:column;gap:8px}
+.skeleton-line{height:16px}
+.skeleton-line:nth-child(3n+2){width:88%}
+.skeleton-line:nth-child(3n+3){width:72%}
+
 /* Modal & Form Styles for Add Technician */
 .modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,27,45,0.6);backdrop-filter:blur(3px);z-index:100;display:flex;align-items:center;justify-content:center;padding:16px}
 .modal-card{background:#fff;border-radius:14px;box-shadow:0 20px 40px rgba(0,0,0,0.15);width:100%;max-width:580px;max-height:calc(100vh - 32px);display:flex;flex-direction:column;overflow:hidden;border:1px solid #e2e8f0;animation:modalIn 0.2s ease-out}
