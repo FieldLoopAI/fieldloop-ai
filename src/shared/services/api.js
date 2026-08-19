@@ -228,4 +228,18 @@ export const api = {
   // financials/audit-log, this covers the operational side (HANDOFF.md §25).
   getPlatformContractorUsage: (contractorId) =>
     authFetch('platform/contractors/usage', { body: { contractorId } }),
+
+  listVehicles: () => authFetch('vehicles/list', { body: {} }).then((res) => res.vehicles),
+
+  addVehicle: (vehicleData) => authFetch('vehicles', { body: vehicleData }),
+
+  updateVehicle: (vehicleId, changes) =>
+    authFetch('vehicles/update', { body: { vehicle_id: vehicleId, ...changes } }),
+
+  listCustomers: () => authFetch('customers/list', { body: {} }).then((res) => res.customers),
+
+  addCustomer: (customerData) => authFetch('customers', { body: customerData }),
+
+  updateCustomer: (customerId, changes) =>
+    authFetch('customers/update', { body: { customer_id: customerId, ...changes } }),
 };

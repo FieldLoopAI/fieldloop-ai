@@ -15,7 +15,9 @@ param(
     'get-job-file', 'submit-kb-entry', 'list-my-kb-submissions',
     'get-platform-overview', 'list-platform-contractors',
     'list-kb-submissions-admin', 'review-kb-submission',
-    'get-platform-contractor-usage'
+    'get-platform-contractor-usage',
+    'list-vehicles', 'add-vehicle', 'update-vehicle',
+    'list-customers', 'add-customer', 'update-customer'
   )]
   [string]$FunctionName
 )

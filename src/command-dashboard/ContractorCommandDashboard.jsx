@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Activity, Archive, CalendarDays, Check, ChevronRight, Download, FileText, Lock, LogOut, Mic, Plus, Search, Square, Truck, UserPlus } from 'lucide-react';
-import { customers, fleet, technicians as mockTechnicians } from './dashboardData';
+import { technicians as mockTechnicians } from './dashboardData';
 import { api } from '../shared/services/api';
 import './dashboard.css';
 
@@ -11,6 +11,17 @@ const initials = name => name.split(' ').map(word => word[0]).join('').slice(0, 
 const localDateString = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 const TODAY_STR = localDateString(new Date());
 const jobStatusColor = (status) => status === 'on_site' ? 'green' : status === 'en_route' ? 'amber' : ['complete', 'closed', 'invoiced', 'paid'].includes(status) ? 'gray' : 'gray';
+// vehicles.current_dtc_codes/oil_life_pct/next_service_mileage are real
+// columns but nothing populates them yet — no OBD-II integration exists.
+// 'No telemetry connected' is the honest state for a real vehicle with none
+// of these set, rather than defaulting to a fabricated 'Healthy'.
+const vehicleHealth = (v) => (v.current_dtc_codes && v.current_dtc_codes.length > 0)
+  ? { color: 'red', text: `Diagnose — ${v.current_dtc_codes.join(', ')}`, label: 'DIAGNOSE' }
+  : (v.oil_life_pct != null && v.oil_life_pct < 20)
+  ? { color: 'amber', text: `Oil life low (${v.oil_life_pct}%)`, label: 'SERVICE SOON' }
+  : (v.current_dtc_codes == null && v.oil_life_pct == null && v.next_service_mileage == null)
+  ? { color: 'gray', text: 'No telemetry connected', label: 'NO TELEMETRY' }
+  : { color: 'green', text: 'Healthy', label: 'HEALTHY' };
 // Voice capture needs mic access, MediaRecorder, and WebSocket — a stable
 // per-session check, never re-evaluated at runtime, so a plain module-level
 // constant is fine (no browser gains/loses these mid-session).
@@ -110,6 +121,14 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
   const [realEstimates, setRealEstimates] = useState(null);
   const [estimatesLoading, setEstimatesLoading] = useState(false);
   const [viewingJobFileId, setViewingJobFileId] = useState(null);
+  const [realVehicles, setRealVehicles] = useState(null);
+  const [vehiclesLoading, setVehiclesLoading] = useState(false);
+  const [showAddVehicleModal, setShowAddVehicleModal] = useState(false);
+  const [editingVehicleId, setEditingVehicleId] = useState(null);
+  const [realCustomers, setRealCustomers] = useState(null);
+  const [customersLoading, setCustomersLoading] = useState(false);
+  const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
+  const [editingCustomerId, setEditingCustomerId] = useState(null);
 
   // Keep sessionStorage in sync with which screen is active so a tab
   // discard/reload restores it instead of resetting to Section 1.
@@ -205,6 +224,30 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
     }
   }, []);
 
+  const loadVehicles = useCallback(async () => {
+    setVehiclesLoading(true);
+    try {
+      const list = await api.listVehicles();
+      setRealVehicles(list);
+    } catch (err) {
+      console.warn('Failed to load live vehicles:', err.message);
+    } finally {
+      setVehiclesLoading(false);
+    }
+  }, []);
+
+  const loadCustomers = useCallback(async () => {
+    setCustomersLoading(true);
+    try {
+      const list = await api.listCustomers();
+      setRealCustomers(list);
+    } catch (err) {
+      console.warn('Failed to load live customers:', err.message);
+    } finally {
+      setCustomersLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (activePage === 1) {
       loadJobs(selectedDate);
@@ -215,7 +258,9 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
     }
     if (activePage === 2) loadEstimates();
     if (activePage === 7) loadInvoices();
-  }, [activePage, selectedDate, loadJobs, loadTechs, loadEstimates, loadInvoices]);
+    if (activePage === 4) { loadVehicles(); loadTechs(); }
+    if (activePage === 5) loadCustomers();
+  }, [activePage, selectedDate, loadJobs, loadTechs, loadEstimates, loadInvoices, loadVehicles, loadCustomers]);
 
   // Loaded once on mount (regardless of active page) so the KPI grid and
   // greeting line reflect real numbers from the moment the dashboard opens,
@@ -295,7 +340,9 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
     { label: 'UNPAID INVOICES', value: money(unpaidTotal), sub: `${unpaidInvoices.length} invoice${unpaidInvoices.length === 1 ? '' : 's'} outstanding` },
     { label: 'PLATFORM FEE (MTD)', value: money(platformFeeMtd), sub: `1.95% · ${money(processedMtd)} processed` },
   ];
-  const filteredCustomers = customers.filter(c => Object.values(c).join(' ').toLowerCase().includes(search.toLowerCase()));
+  const displayVehicles = realVehicles ?? [];
+  const displayCustomers = realCustomers ?? [];
+  const filteredCustomers = displayCustomers.filter(c => [c.household_name, c.primary_contact_name, c.primary_phone, c.email, c.service_address].filter(Boolean).join(' ').toLowerCase().includes(search.toLowerCase()));
   const flash = message => { setToast(message); setTimeout(() => setToast(''), 2800); };
   const requestExport = () => { const entry = { requested: now.toLocaleString('sv-SE').slice(0, 16), type: 'Custom data archive', by: 'Marcus Reyes', size: `${(include.length * .34).toFixed(1)} GB`, status: 'Queued' }; setExports(e => [entry, ...e]); flash('Export request queued. A secure link will be delivered when ready.'); setTimeout(() => setExports(e => e.map((x, i) => i === 0 ? { ...x, status: 'Ready' } : x)), 1600); };
   const pages = ['Live dispatch', 'Approvals queue', 'Technicians', 'Fleet & vehicles', 'Customer database', 'Live field data', 'Invoices & payments', 'Reports & analytics', 'Data archive & export', 'Team & access', 'Knowledge Base'];
@@ -305,6 +352,8 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
   // for other roles instead of letting them hit a 403 on submit.
   const canManageTechnicians = tenant.role === 'owner_admin';
   const editingTech = editingTechId ? displayTechs.find(t => t.id === editingTechId) || null : null;
+  const editingVehicle = editingVehicleId ? displayVehicles.find(v => v.id === editingVehicleId) || null : null;
+  const editingCustomer = editingCustomerId ? displayCustomers.find(c => c.id === editingCustomerId) || null : null;
 
   return <div className={`dashboard-shell page-${activePage}`}>
     <header className="dashboard-topbar"><div className="logo">FIELDLOOP</div><span className="divider" /><strong>{tenant.name}</strong><nav>Command Center</nav><Pill><i className="green" /> MFA verified · session 07:42</Pill><span className="top-user">{tenant.user} · {tenant.role}</span><Button onClick={() => { clearAllPersistedDashboardState(); onLogout(); }}><LogOut size={15} /> Logout</Button></header>
@@ -357,14 +406,47 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
           </tr>;
         })}</DataTable>}
       </Panel>
-      <Panel num="4" title="Fleet & vehicles (3)" actions={<><Button>↓ Export</Button><Button primary><Plus size={15} /> Add vehicle</Button></>}><DataTable headers={['UNIT', 'VEHICLE', 'VIN (LAST 6)', 'ASSIGNED DRIVER', 'HEALTH', 'ACTIONS']}>{fleet.map(v => <tr key={v.unit}><td><Truck size={16} /> {v.unit}</td><td>{v.vehicle}</td><td>{v.vin}</td><td>{v.driver}</td><td><Status color={v.color}>{v.health}</Status></td><td><Button>Edit</Button> <Button>Retire</Button>{v.color === 'red' && <Button>View DTC</Button>}</td></tr>)}</DataTable><div className="inline-alert">⚠ <div><b>Truck 03 — thermostat DTC detected 06:42 AM</b><br />Coolant temperature is below its regulating threshold. Not critical; diagnose within the week. Today’s 22-mile drive should be safe.</div></div></Panel>
-      <Panel num="5" title="Customer database" actions={<><div className="search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customers" /></div><Button>↓ Export</Button><Button primary><Plus size={15} /> Add customer</Button></>}><DataTable headers={['CUSTOMER', 'PHONE', 'EMAIL', 'ADDRESS', 'JOBS', 'LIFETIME VALUE', 'ACTIONS']}>{filteredCustomers.map(c => <tr key={c.name}><td>{c.name}</td><td>{c.phone}</td><td>{c.email}</td><td>{c.address}</td><td>{c.jobs}</td><td><b>{c.value}</b></td><td><Button>Open</Button> <Button>Edit</Button></td></tr>)}</DataTable></Panel>
+      <Panel num="4" title={`Fleet & vehicles (${displayVehicles.filter(v => v.is_active).length})`} actions={<>{canManageJobs && <Button primary onClick={() => setShowAddVehicleModal(true)}><Plus size={15} /> Add vehicle</Button>}</>}>
+        {vehiclesLoading ? <div className="loading-roster">Loading fleet…</div> : displayVehicles.length === 0 ? <div className="loading-roster">No vehicles added yet.</div> : (
+          <DataTable headers={['UNIT', 'VEHICLE', 'ASSIGNED DRIVER', 'STATUS', 'HEALTH', 'ACTIONS']}>
+            {displayVehicles.map(v => {
+              const health = vehicleHealth(v);
+              return <tr key={v.id}>
+                <td><Truck size={16} /> {v.unit_number}</td>
+                <td>{[v.year, v.make, v.model].filter(Boolean).join(' ') || '—'}</td>
+                <td>{v.driver_name || '—'}</td>
+                <td><Pill tone={v.is_active ? 'green' : 'gray'}>{v.is_active ? 'active' : 'retired'}</Pill></td>
+                <td><Status color={health.color}>{health.text}</Status></td>
+                <td>{canManageJobs ? <>
+                  <Button onClick={() => setEditingVehicleId(v.id)}>Edit</Button>{' '}
+                  {v.is_active && <Button onClick={async () => { await api.updateVehicle(v.id, { is_active: false }); flash(`${v.unit_number} retired.`); loadVehicles(); }}>Retire</Button>}
+                </> : <span className="muted">—</span>}</td>
+              </tr>;
+            })}
+          </DataTable>
+        )}
+      </Panel>
+      <Panel num="5" title="Customer database" actions={<><div className="search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customers" /></div>{canManageJobs && <Button primary onClick={() => setShowAddCustomerModal(true)}><Plus size={15} /> Add customer</Button>}</>}>
+        {customersLoading ? <div className="loading-roster">Loading customers…</div> : filteredCustomers.length === 0 ? <div className="loading-roster">{displayCustomers.length === 0 ? 'No customers yet.' : `No customers match "${search}".`}</div> : (
+          <DataTable headers={['CUSTOMER', 'PHONE', 'EMAIL', 'ADDRESS', 'JOBS', 'LIFETIME VALUE', 'ACTIONS']}>
+            {filteredCustomers.map(c => <tr key={c.id}>
+              <td>{c.household_name}</td>
+              <td>{c.primary_phone}</td>
+              <td>{c.email || '—'}</td>
+              <td>{c.service_address}</td>
+              <td>{c.job_count}{c.active_job_count > 0 ? ` (${c.active_job_count} active)` : ''}</td>
+              <td><b>${Number(c.lifetime_value || 0).toLocaleString()}</b></td>
+              <td>{canManageJobs ? <Button onClick={() => setEditingCustomerId(c.id)}>Edit</Button> : <span className="muted">—</span>}</td>
+            </tr>)}
+          </DataTable>
+        )}
+      </Panel>
       <Panel num="6" title="Live field data stream — Job FL-2847 (Master Bath Remodel)" actions={<><Button>📄 View full timeline</Button><Button>↓ Download job file</Button></>}><div className="field-event-list">{[['07:58 AM', 'GPS · GEOFENCE ENTRY', 'Taylor & Miguel arrived on site. Labor clock started automatically.', 'View map'], ['08:12 AM', 'PHOTO · VOICE-TAGGED', '“Pre-demo condition of shower pan. Note tile separation at north wall.”', 'View photo'], ['09:28 AM', 'PHOTO · VOICE-TAGGED', '“Rotted subfloor located at joist bay 3. Will need change order for HardieBacker and joist sister.”', 'View photo'], ['09:32 AM', 'BARCODE SCAN · TRUCK INVENTORY', '3× HardieBacker cement board (36×60) · Auto-billed to job at $28.99 each', 'View parts'], ['10:15 AM', 'SMS · CUSTOMER NOTIFICATION', 'Text sent to Sarah Anderson: “Change order ready for review. Tap link to sign.”', 'View SMS log'], ['10:18 AM', 'E-SIGNATURE · CUSTOMER APPROVED', 'Sarah Anderson e-signed change order remotely. Now awaits your final go-ahead to bill.', 'View signed doc']].map(([time, type, description, action]) => <div className="field-event" key={time + type}><time>{time}</time><Activity size={17} /><div><label>{type}</label><p>{description}</p></div><Button>{action}</Button></div>)}</div></Panel>
       <Panel num="7" title="Invoices & payments" actions={<Button>↓ Export CSV</Button>}>
         <Invoices invoices={realInvoices} loading={invoicesLoading} />
         <div className="reconciliation"><b>Reconciliation summary — month to date</b><p><strong>{money(processedMtd)} processed</strong> · {money(platformFeeMtd)} platform fee withheld · <strong>{money(processedMtd - platformFeeMtd)} net</strong> to your account.</p></div>
       </Panel>
-      <Panel num="8" title="Reports & analytics" actions={<><Button><CalendarDays size={15} /> Change date range</Button><Button>↓ Export report</Button></>}><Reports /><Retention paused={paused} setPaused={setPaused} /></Panel>
+      <Panel num="8" title="Reports & analytics" actions={<><Button><CalendarDays size={15} /> Change date range</Button><Button>↓ Export report</Button></>}><Reports vehicles={displayVehicles} /><Retention paused={paused} setPaused={setPaused} /></Panel>
       <Panel num="9" title="Data archive & export" actions={<span className="muted">Request historical data from FieldLoop · download to your local system</span>}><div className="ownership"><Archive size={21} /><div><b>You own your data. FieldLoop retains it for you.</b><p>Every job, photo, voice note, invoice, and payment record is exportable. Exports are watermarked and delivered through a secure 72-hour download link.</p></div></div><div className="export-form"><h3>Request a new data export</h3><div className="form-grid"><select><option>All records (full company archive)</option><option>Jobs only</option><option>Invoices only</option></select><select><option>Jan 01, 2026 → Jul 21, 2026</option></select><select><option>ZIP (CSV + PDF + JPEG)</option><option>CSV-only</option><option>PDF-only</option></select></div><div className="include-chips">{['Job records', 'Customer records', 'Estimates & change orders', 'Invoices & payments', 'Site photos (14,280 files)', 'Voice notes / transcripts', 'GPS timelines', 'Barcode scans / parts', 'SMS transcripts', 'Reconciliation reports'].map(item => <button key={item} className={include.includes(item) ? 'selected' : ''} onClick={() => setInclude(x => x.includes(item) ? x.filter(y => y !== item) : [...x, item])}>{include.includes(item) ? '✓ ' : ''}{item}</button>)}</div><div className="export-submit"><span>Estimated size: <b>{(include.length * .34).toFixed(1)} GB</b> · Estimated ready: ~45 minutes · Delivered to {tenant.email}</span><Button primary onClick={requestExport}><Download size={15} /> Request export</Button></div></div><DataTable headers={['REQUESTED', 'TYPE / RANGE', 'REQUESTED BY', 'SIZE', 'STATUS', 'ACTION']}>{exports.map((e, i) => <tr key={e.requested}><td>{e.requested}</td><td>{e.type}</td><td>{e.by}</td><td>{e.size}</td><td><Pill tone={e.status === 'Ready' ? 'green' : e.status === 'Queued' ? 'blue' : 'gray'}>{e.status === 'Ready' ? '✓ ' : '◐ '}{e.status}</Pill></td><td><Button onClick={() => flash(e.status === 'Ready' ? 'Secure download would open here.' : 'Export re-requested.')}>{e.status === 'Ready' ? '↓ Download (60hr left)' : 'Re-request'}</Button></td></tr>)}</DataTable></Panel>
       <Panel num="10" title="Team & access — who at Luxe can log in" actions={<><Button><FileText size={15} /> View audit log</Button><Button primary><Plus size={15} /> Invite team member</Button></>}><div className="owner-warning">⚠ <div><b>Owner-only section</b><p>Only Owner/Admin users can change team roles. Marcus J. Reyes is the current designated administrator; transfers require FieldLoop Support verification.</p></div></div><Team /><Permissions /><div className="policy-grid">{[['PASSWORD MINIMUM', '12 characters + complexity'], ['MFA REQUIREMENT', 'Required · TOTP or biometric'], ['SESSION TIMEOUT', '20 min idle · 8 hr max'], ['PASSWORD ROTATION', '90 days · admin can enforce'], ['FAILED LOGIN LOCKOUT', '5 attempts · 15 min lockout'], ['SUSPICIOUS LOGIN ALERTS', 'Owner notified via SMS']].map(([a,b]) => <div key={a}><label>{a}</label><span>{b}</span></div>)}</div></Panel>
       <Panel num="11" title="Knowledge Base — submit a fact" actions={<span className="muted">Reviewed by FieldLoop before it's searchable</span>}><KnowledgeBaseSubmission flash={flash} /></Panel>
@@ -406,6 +488,26 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
       onSuccess={(msg) => { flash(msg); loadJobs(selectedDate); setVoiceJobSeed(null); }}
     />}
     {viewingJobFileId && <JobFileModal jobId={viewingJobFileId} onClose={() => setViewingJobFileId(null)} />}
+    {showAddVehicleModal && <VehicleModal
+      technicians={displayTechs}
+      onClose={() => setShowAddVehicleModal(false)}
+      onSuccess={(msg) => { flash(msg); setShowAddVehicleModal(false); loadVehicles(); }}
+    />}
+    {editingVehicle && <VehicleModal
+      vehicle={editingVehicle}
+      technicians={displayTechs}
+      onClose={() => setEditingVehicleId(null)}
+      onSuccess={(msg) => { flash(msg); setEditingVehicleId(null); loadVehicles(); }}
+    />}
+    {showAddCustomerModal && <CustomerModal
+      onClose={() => setShowAddCustomerModal(false)}
+      onSuccess={(msg) => { flash(msg); setShowAddCustomerModal(false); loadCustomers(); }}
+    />}
+    {editingCustomer && <CustomerModal
+      customer={editingCustomer}
+      onClose={() => setEditingCustomerId(null)}
+      onSuccess={(msg) => { flash(msg); setEditingCustomerId(null); loadCustomers(); }}
+    />}
   </div>;
 }
 
@@ -1237,6 +1339,155 @@ function closeDeepgramStream(ws) {
   });
 }
 
+// Handles both "Add vehicle" (vehicle=null) and "Edit vehicle" (vehicle set)
+// in one component, matching CreateJobModal's own dual-purpose shape rather
+// than a separate Add/Edit pair — the field set barely differs.
+function VehicleModal({ vehicle, technicians, onClose, onSuccess }) {
+  const isEdit = Boolean(vehicle);
+  const [unitNumber, setUnitNumber] = useState(vehicle?.unit_number || '');
+  const [make, setMake] = useState(vehicle?.make || '');
+  const [model, setModel] = useState(vehicle?.model || '');
+  const [year, setYear] = useState(vehicle?.year || '');
+  const [driverId, setDriverId] = useState(vehicle?.default_driver_id || '');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!unitNumber.trim()) { setError('Unit number is required.'); return; }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const payload = { unit_number: unitNumber.trim(), make, model, year, default_driver_id: driverId || null };
+      if (isEdit) await api.updateVehicle(vehicle.id, payload);
+      else await api.addVehicle(payload);
+      onSuccess(isEdit ? 'Vehicle updated.' : 'Vehicle added.');
+    } catch (err) {
+      setError(err.message || 'Failed to save vehicle.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <form onSubmit={handleSubmit}>
+          <div className="modal-header">
+            <h3>{isEdit ? 'Edit vehicle' : 'Add vehicle'}</h3>
+            <button className="modal-close" type="button" onClick={onClose}>✕</button>
+          </div>
+          <div className="modal-body">
+            {error && <div className="tech-error-banner">{error}</div>}
+            <div className="tech-form-group full-width">
+              <label>Unit number</label>
+              <input value={unitNumber} onChange={e => setUnitNumber(e.target.value)} placeholder="e.g. Van 01" required />
+            </div>
+            <div className="tech-form-grid">
+              <div className="tech-form-group"><label>Make</label><input value={make} onChange={e => setMake(e.target.value)} placeholder="e.g. Ford" /></div>
+              <div className="tech-form-group"><label>Model</label><input value={model} onChange={e => setModel(e.target.value)} placeholder="e.g. Transit 250" /></div>
+            </div>
+            <div className="tech-form-grid">
+              <div className="tech-form-group"><label>Year</label><input type="number" value={year} onChange={e => setYear(e.target.value)} placeholder="2024" /></div>
+              <div className="tech-form-group">
+                <label>Assigned driver</label>
+                <select value={driverId} onChange={e => setDriverId(e.target.value)}>
+                  <option value="">Unassigned</option>
+                  {technicians.map(t => <option key={t.id} value={t.id}>{t.full_name || t.name}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="modal-footer">
+            <Button type="button" onClick={onClose} disabled={submitting}>Cancel</Button>
+            <Button type="submit" primary disabled={submitting}>{submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Add vehicle'}</Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+const CUSTOMER_PREFERRED_CONTACT = [{ value: '', label: 'No preference' }, { value: 'call', label: 'Call' }, { value: 'email', label: 'Email' }, { value: 'text', label: 'Text' }];
+
+// Handles both "Add customer" (customer=null) and "Edit customer".
+function CustomerModal({ customer, onClose, onSuccess }) {
+  const isEdit = Boolean(customer);
+  const [householdName, setHouseholdName] = useState(customer?.household_name || '');
+  const [contactName, setContactName] = useState(customer?.primary_contact_name || '');
+  const [primaryPhone, setPrimaryPhone] = useState(customer?.primary_phone || '');
+  const [email, setEmail] = useState(customer?.email || '');
+  const [serviceAddress, setServiceAddress] = useState(customer?.service_address || '');
+  const [preferredContact, setPreferredContact] = useState(customer?.preferred_contact || '');
+  const [notes, setNotes] = useState(customer?.notes || '');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!householdName.trim()) { setError('Customer name is required.'); return; }
+    if (!primaryPhone.trim()) { setError('Primary phone is required.'); return; }
+    if (!serviceAddress.trim()) { setError('Service address is required.'); return; }
+    setSubmitting(true);
+    setError(null);
+    try {
+      const payload = { household_name: householdName.trim(), primary_contact_name: contactName, primary_phone: primaryPhone, email, service_address: serviceAddress, preferred_contact: preferredContact, notes };
+      if (isEdit) await api.updateCustomer(customer.id, payload);
+      else await api.addCustomer(payload);
+      onSuccess(isEdit ? 'Customer updated.' : 'Customer added.');
+    } catch (err) {
+      setError(err.message || 'Failed to save customer.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <form onSubmit={handleSubmit}>
+          <div className="modal-header">
+            <h3>{isEdit ? 'Edit customer' : 'Add customer'}</h3>
+            <button className="modal-close" type="button" onClick={onClose}>✕</button>
+          </div>
+          <div className="modal-body">
+            {error && <div className="tech-error-banner">{error}</div>}
+            <div className="tech-form-group full-width">
+              <label>Household / business name</label>
+              <input value={householdName} onChange={e => setHouseholdName(e.target.value)} placeholder="e.g. Anderson, Sarah & Todd" required />
+            </div>
+            <div className="tech-form-grid">
+              <div className="tech-form-group"><label>Contact name</label><input value={contactName} onChange={e => setContactName(e.target.value)} /></div>
+              <div className="tech-form-group"><label>Primary phone</label><input value={primaryPhone} onChange={e => setPrimaryPhone(e.target.value)} placeholder="(941) 555-0812" required /></div>
+            </div>
+            <div className="tech-form-grid">
+              <div className="tech-form-group"><label>Email</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} /></div>
+              <div className="tech-form-group">
+                <label>Preferred contact</label>
+                <select value={preferredContact} onChange={e => setPreferredContact(e.target.value)}>
+                  {CUSTOMER_PREFERRED_CONTACT.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="tech-form-group full-width">
+              <label>Service address</label>
+              <input value={serviceAddress} onChange={e => setServiceAddress(e.target.value)} placeholder="Street, City, State" required />
+            </div>
+            <div className="tech-form-group full-width">
+              <label>Notes</label>
+              <textarea value={notes} onChange={e => setNotes(e.target.value)} />
+            </div>
+          </div>
+          <div className="modal-footer">
+            <Button type="button" onClick={onClose} disabled={submitting}>Cancel</Button>
+            <Button type="submit" primary disabled={submitting}>{submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Add customer'}</Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function VoiceCaptureModal({ onClose, onExtracted, onFillManually }) {
   // idle -> connecting -> listening -> extracting -> error (any state can
   // fall back to error; error always leaves a path back to manual entry).
@@ -1739,7 +1990,7 @@ function Invoices({ invoices, loading }) {
     {invoices.map(inv => <InvoiceRow key={inv.id} invoice={inv} />)}
   </DataTable>;
 }
-function Reports() { const efficiency = [['Taylor R.', 133], ['Miguel S.', 118], ['Devon W.', 104], ['Ben N.', 100], ['Jake A.', 85], ['Chris D.', 74], ['Raul O. (apprentice)', 58]]; return <div className="reports"><article><h3>Technician efficiency <small>Flat-rate billed vs. GPS-clocked · last 30 days</small></h3>{efficiency.map(([name, pct]) => <div className="bar-row" key={name}><span>{name}</span><div><i className={pct >= 100 ? 'green' : pct >= 75 ? 'amber' : 'red'} style={{ width: `${Math.min(pct / 150 * 100, 100)}%` }} /></div><b className={pct >= 100 ? 'green' : pct >= 75 ? 'amber' : 'red'}>{pct}%</b></div>)}</article><article><h3>Unapplied Time (Labor Bleed) <small>last 30 days</small></h3><strong className="big-stat">47.5 hrs</strong><p>~$4,512 in unbilled labor · 6.8% of total tech hours</p>{[['Waiting on parts delivery', '21.0 hrs'], ['Customer approval delays', '14.5 hrs'], ['Rework / callbacks', '7.5 hrs'], ['Weather / unscheduled', '4.5 hrs']].map(x => <div className="simple-row" key={x[0]}><span>{x[0]}</span><b>{x[1]}</b></div>)}</article><article><h3>Fleet Health — OBD-II Monitoring</h3>{fleet.map(v => <div className="simple-row" key={v.unit}><Status color={v.color}>{v.unit} · {v.vehicle.split(' ').slice(1).join(' ')}</Status><b className={v.color}>{v.color === 'green' ? 'HEALTHY' : v.color === 'amber' ? 'SERVICE SOON' : 'DIAGNOSE'}</b></div>)}</article></div>; }
+function Reports({ vehicles }) { const efficiency = [['Taylor R.', 133], ['Miguel S.', 118], ['Devon W.', 104], ['Ben N.', 100], ['Jake A.', 85], ['Chris D.', 74], ['Raul O. (apprentice)', 58]]; return <div className="reports"><article><h3>Technician efficiency <small>Flat-rate billed vs. GPS-clocked · last 30 days</small></h3>{efficiency.map(([name, pct]) => <div className="bar-row" key={name}><span>{name}</span><div><i className={pct >= 100 ? 'green' : pct >= 75 ? 'amber' : 'red'} style={{ width: `${Math.min(pct / 150 * 100, 100)}%` }} /></div><b className={pct >= 100 ? 'green' : pct >= 75 ? 'amber' : 'red'}>{pct}%</b></div>)}</article><article><h3>Unapplied Time (Labor Bleed) <small>last 30 days</small></h3><strong className="big-stat">47.5 hrs</strong><p>~$4,512 in unbilled labor · 6.8% of total tech hours</p>{[['Waiting on parts delivery', '21.0 hrs'], ['Customer approval delays', '14.5 hrs'], ['Rework / callbacks', '7.5 hrs'], ['Weather / unscheduled', '4.5 hrs']].map(x => <div className="simple-row" key={x[0]}><span>{x[0]}</span><b>{x[1]}</b></div>)}</article><article><h3>Fleet Health — OBD-II Monitoring</h3>{vehicles.length === 0 ? <p className="muted" style={{ fontSize: '12px' }}>No vehicles added yet.</p> : vehicles.map(v => { const health = vehicleHealth(v); return <div className="simple-row" key={v.id}><Status color={health.color}>{v.unit_number}{v.make || v.model ? ` · ${[v.make, v.model].filter(Boolean).join(' ')}` : ''}</Status><b className={health.color}>{health.label}</b></div>; })}</article></div>; }
 function Retention({ paused, setPaused }) { const rows = [['TODAY', 'Delgado, R. — Day-1 review request · FL-2831', 'Queued 5:00 PM'], ['TOMORROW', 'Whitfield, K. — Day-1 review request · FL-2830', 'Queued 4:00 PM'], ['JUL 24', 'Anderson, S. — 3-month check-in · FL-2778', 'Queued'], ['AUG 04', 'Ramos, J. — 12-month anniversary · FL-2612', 'Queued']]; return <article className="retention"><h3>Retention queue — automated customer follow-ups</h3>{rows.map(([date, description, time], i) => <div key={date}><Pill tone="gray">{date}</Pill><span>{description}</span><small>{paused.includes(i) ? 'Paused' : time}</small><Button onClick={() => setPaused(p => p.includes(i) ? p.filter(x => x !== i) : [...p, i])}>{paused.includes(i) ? 'Resume' : 'Pause'}</Button></div>)}</article>; }
 function Team() { const team = [['Marcus J. Reyes', 'marcus@luxerenovationsrq.com', 'Owner / Admin', 'Today · 8:12 AM'], ['Diana Reyes', 'diana@luxerenovationsrq.com', 'Office Mgr / Dispatcher', 'Today · 7:48 AM'], ['Sofia Gonzalez', 'sofia@luxerenovationsrq.com', 'Bookkeeper / AP', 'Yesterday · 4:31 PM'], ['Tyler Brooks', 'tyler@luxerenovationsrq.com', 'Field Ops Lead', 'Today · 6:52 AM'], ['9× Technicians', 'Individual mobile logins', 'Technician (mobile only)', 'Various']]; return <DataTable headers={['TEAM MEMBER', 'EMAIL', 'ROLE', 'MFA', 'LAST LOGIN', 'ACTIONS']}>{team.map((t, i) => <tr key={t[0]}><td><Avatar name={t[0]} /> {t[0]}</td><td>{t[1]}</td><td><Pill tone={i === 0 ? 'green' : i === 1 ? 'blue' : i === 2 ? 'purple' : 'amber'}>{t[2]}</Pill></td><td><Status>✓ {i === 4 ? 'Biometric' : 'TOTP'}</Status></td><td>{t[3]}</td><td><Button>Edit</Button>{i > 0 && i < 4 && <Button>Remove</Button>}{i === 4 && <Button>Manage</Button>}</td></tr>)}</DataTable>; }
 function Permissions() { const rows = [['Owner/Admin (Marcus)', '✓ Full', '✓ Approve', '✓ Full', '✓ Full', '✓ Manage', '✓ Request', '✓ Full'], ['Office Mgr/Dispatcher', '✓ Full', '◐ Send only', '◐ View only', '✓ Full', '✕ No', '◐ Request', '✕ No'], ['Bookkeeper/AP', '◐ View only', '◐ View only', '✓ Full', '◐ Billing only', '✕ No', '✓ Request', '✕ No'], ['Field Ops Lead', '◐ Assign techs', '◐ Create only', '✕ No', '◐ Contact only', '✕ No', '✕ No', '✕ No']]; return <div className="permissions"><h3>Role permissions matrix</h3><DataTable headers={['ROLE AT LUXE', 'JOBS & DISPATCH', 'ESTIMATES', 'INVOICES', 'CUSTOMER PII', 'TEAM & ACCESS', 'DATA ARCHIVE', 'COMPANY SETTINGS']}>{rows.map(row => <tr key={row[0]}>{row.map((cell, i) => <td key={i}>{cell}</td>)}</tr>)}</DataTable></div>; }
