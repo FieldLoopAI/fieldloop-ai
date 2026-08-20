@@ -17,7 +17,10 @@ param(
     'list-kb-submissions-admin', 'review-kb-submission',
     'get-platform-contractor-usage',
     'list-vehicles', 'add-vehicle', 'update-vehicle',
-    'list-customers', 'add-customer', 'update-customer'
+    'list-customers', 'add-customer', 'update-customer',
+    'list-team', 'list-audit-log', 'list-retention-queue', 'update-retention-flag',
+    'list-export-requests', 'create-export-request',
+    'list-live-feed'
   )]
   [string]$FunctionName
 )

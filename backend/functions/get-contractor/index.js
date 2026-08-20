@@ -90,14 +90,21 @@ exports.handler = async (event) => {
     }
 
     const { ip, userAgent } = requestMeta(event);
-    await supabase.from('access_audit_log').insert({
+    // 'VIEWED' isn't a valid access_audit_log.action value (only
+    // update/view/reveal/delete/export pass the real CHECK constraint —
+    // verified live, HANDOFF.md §12/§28) — every prior call silently failed
+    // to write this row, and the error was never checked. Fixed to 'view'
+    // and the error is now logged (not thrown — a failed audit write should
+    // never block the contractor record from loading).
+    const { error: auditErr } = await supabase.from('access_audit_log').insert({
       user_id: flUser.id,
       contractor_id: contractorId,
-      action: 'VIEWED',
+      action: 'view',
       field_accessed: 'contractor record',
       ip_address: ip,
       user_agent: userAgent,
     });
+    if (auditErr) console.error('Failed to write access_audit_log row:', auditErr.message);
 
     return {
       statusCode: 200,

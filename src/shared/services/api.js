@@ -189,6 +189,12 @@ export const api = {
   // technician mobile app) — backs the "View job file" action.
   getJobFile: (jobId) => authFetch('jobs/job-file', { body: { job_id: jobId } }),
 
+  // Real, grouped-per-job field activity for every en_route/on_site job —
+  // backs Panel 6 "Live field data stream". Polled on an interval by the
+  // dashboard, not push/subscription-based (no real-time precedent exists
+  // anywhere else in this app yet).
+  getLiveFeed: () => authFetch('jobs/live-feed', { body: {} }).then((res) => res.jobs),
+
   // Read-only — invoices are compiled by the technician's mobile app +
   // Stripe Connect (HANDOFF.md §11.3, Beat 7), never created/edited here.
   listInvoices: () => authFetch('invoices/list', { body: {} }).then((res) => res.invoices),
@@ -242,4 +248,30 @@ export const api = {
 
   updateCustomer: (customerId, changes) =>
     authFetch('customers/update', { body: { customer_id: customerId, ...changes } }),
+
+  // Team & Access (Panel 10) — real contractor_users roster. Currently only
+  // ever returns owner_admin rows: the real CHECK constraint on
+  // contractor_users.role only allows that one value today (HANDOFF.md §10
+  // Round 5) — no multi-role invite flow exists yet.
+  listTeam: () => authFetch('team/list', { body: {} }).then((res) => res.team),
+
+  // Real access_audit_log entries for this contractor, honestly labeled —
+  // mostly FieldLoop staff actions (onboarding, admin), not contractor-side
+  // team activity. See list-audit-log's own header comment.
+  listAuditLog: () => authFetch('audit-log/list', { body: {} }).then((res) => res.entries),
+
+  // Retention queue (Panel 8 sub-panel) — real due/paused state computed
+  // from real jobs + customers.retention_flags. No automated sending exists
+  // yet; this only ever computes what's due, never marks anything sent.
+  listRetentionQueue: () => authFetch('retention/list', { body: {} }).then((res) => res.queue),
+
+  updateRetentionFlag: (customerId, paused) =>
+    authFetch('retention/update', { body: { customer_id: customerId, paused } }),
+
+  // Data Archive & Export (Panel 9) — real request tracking only. Creating a
+  // request writes a real data_export_requests row and leaves it at
+  // 'queued' — no file-generation/delivery pipeline exists yet.
+  listExportRequests: () => authFetch('export-requests/list', { body: {} }).then((res) => res.requests),
+
+  createExportRequest: (payload) => authFetch('export-requests', { body: payload }),
 };

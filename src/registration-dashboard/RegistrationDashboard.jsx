@@ -222,7 +222,7 @@ export default function RegistrationDashboard({ staffUser }) {
   };
 
   const handleBackToSearch = () => {
-    loadRequestIdRef.current++; // invalidate any load still in flight
+    loadRequestIdRef.current++; // ininvalidate any load still  flight
     setContractorData(null);
     setActiveContractorId('');
     setActiveStep(1);

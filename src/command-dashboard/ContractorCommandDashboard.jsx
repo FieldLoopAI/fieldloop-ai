@@ -75,7 +75,7 @@ function clearAllPersistedDashboardState() {
 
 export default function ContractorCommandDashboard({ tenant, onLogout }) {
   const persistedNav = readPersistedNav();
-  const [now, setNow] = useState(new Date()); const [activePage, setActivePage] = useState(persistedNav.activePage || 1); const [search, setSearch] = useState(''); const [paused, setPaused] = useState([]); const [exports, setExports] = useState([{ requested: '2026-07-15 09:22', type: 'Q2 2026 all records', by: 'Sofia Gonzalez', size: '2.1 GB', status: 'Ready' }, { requested: '2026-06-30 16:41', type: 'H1 2026 invoices + payments', by: 'Sofia Gonzalez', size: '84 MB', status: 'Expired 07/03' }]); const [include, setInclude] = useState(['Job records', 'Customer records', 'Estimates & change orders', 'Invoices & payments', 'Site photos (14,280 files)', 'Voice notes / transcripts', 'GPS timelines', 'Barcode scans / parts', 'SMS transcripts', 'Reconciliation reports']); const [toast, setToast] = useState('');
+  const [now, setNow] = useState(new Date()); const [activePage, setActivePage] = useState(persistedNav.activePage || 1); const [search, setSearch] = useState(''); const [include, setInclude] = useState(['Job records', 'Customer records', 'Estimates & change orders', 'Invoices & payments', 'Site photos', 'Voice notes / transcripts', 'GPS timelines']); const [toast, setToast] = useState('');
   const [realTechs, setRealTechs] = useState(null);
   const [techLoading, setTechLoading] = useState(false);
   // Reopen a write modal automatically if a draft survived a tab
@@ -129,6 +129,30 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
   const [customersLoading, setCustomersLoading] = useState(false);
   const [showAddCustomerModal, setShowAddCustomerModal] = useState(false);
   const [editingCustomerId, setEditingCustomerId] = useState(null);
+  // Reports (Panel 8) needs the *complete* job set regardless of whatever
+  // date filter Panel 1's dispatch board currently has selected — fetched
+  // independently rather than reusing realJobs, which is date-scoped.
+  const [reportJobs, setReportJobs] = useState(null);
+  const [reportJobsLoading, setReportJobsLoading] = useState(false);
+  const [retentionQueue, setRetentionQueue] = useState(null);
+  const [retentionLoading, setRetentionLoading] = useState(false);
+  const [retentionBusyId, setRetentionBusyId] = useState(null);
+  const [realTeam, setRealTeam] = useState(null);
+  const [teamLoading, setTeamLoading] = useState(false);
+  const [auditLog, setAuditLog] = useState(null);
+  const [auditLogLoading, setAuditLogLoading] = useState(false);
+  const [showAuditLog, setShowAuditLog] = useState(false);
+  const [exportRequests, setExportRequests] = useState(null);
+  const [exportRequestsLoading, setExportRequestsLoading] = useState(false);
+  const [exportSubmitting, setExportSubmitting] = useState(false);
+  // Panel 6's real live feed — every en_route/on_site job with its own
+  // recent field_events, grouped server-side (list-live-feed). Polled while
+  // this panel is active; see the interval effect below.
+  const [liveFeed, setLiveFeed] = useState(null);
+  const [liveFeedLoading, setLiveFeedLoading] = useState(false);
+  const [liveFeedError, setLiveFeedError] = useState(null);
+  const [exportType, setExportType] = useState('full');
+  const [exportFormat, setExportFormat] = useState('zip');
 
   // Keep sessionStorage in sync with which screen is active so a tab
   // discard/reload restores it instead of resetting to Section 1.
@@ -248,6 +272,92 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
     }
   }, []);
 
+  const loadReportJobs = useCallback(async () => {
+    setReportJobsLoading(true);
+    try {
+      const res = await api.listJobs({});
+      setReportJobs(res.jobs);
+    } catch (err) {
+      console.warn('Failed to load report data:', err.message);
+    } finally {
+      setReportJobsLoading(false);
+    }
+  }, []);
+
+  const loadRetentionQueue = useCallback(async () => {
+    setRetentionLoading(true);
+    try {
+      const list = await api.listRetentionQueue();
+      setRetentionQueue(list);
+    } catch (err) {
+      console.warn('Failed to load retention queue:', err.message);
+    } finally {
+      setRetentionLoading(false);
+    }
+  }, []);
+
+  const loadTeam = useCallback(async () => {
+    setTeamLoading(true);
+    try {
+      const list = await api.listTeam();
+      setRealTeam(list);
+    } catch (err) {
+      console.warn('Failed to load team:', err.message);
+    } finally {
+      setTeamLoading(false);
+    }
+  }, []);
+
+  const loadAuditLog = useCallback(async () => {
+    setAuditLogLoading(true);
+    try {
+      const list = await api.listAuditLog();
+      setAuditLog(list);
+    } catch (err) {
+      console.warn('Failed to load audit log:', err.message);
+    } finally {
+      setAuditLogLoading(false);
+    }
+  }, []);
+
+  const loadExportRequests = useCallback(async () => {
+    setExportRequestsLoading(true);
+    try {
+      const list = await api.listExportRequests();
+      setExportRequests(list);
+    } catch (err) {
+      console.warn('Failed to load export requests:', err.message);
+    } finally {
+      setExportRequestsLoading(false);
+    }
+  }, []);
+
+  const loadLiveFeed = useCallback(async () => {
+    setLiveFeedError(null);
+    try {
+      const jobs = await api.getLiveFeed();
+      setLiveFeed(jobs);
+    } catch (err) {
+      setLiveFeedError(err.message || 'Failed to load the live feed.');
+    } finally {
+      setLiveFeedLoading(false);
+    }
+  }, []);
+
+  // Polls only while Panel 6 is actually the active page — no background
+  // refresh when the dispatcher isn't looking at it, matching every other
+  // panel's "load on activePage" convention rather than a permanent
+  // connection. No live/real-time precedent exists anywhere else in this
+  // app (confirmed: no postgres_changes/.channel()/WebSocket-to-Supabase
+  // usage), so a plain interval is the consistent choice here too.
+  useEffect(() => {
+    if (activePage !== 6) return;
+    setLiveFeedLoading(true);
+    loadLiveFeed();
+    const id = setInterval(loadLiveFeed, 20000);
+    return () => clearInterval(id);
+  }, [activePage, loadLiveFeed]);
+
   useEffect(() => {
     if (activePage === 1) {
       loadJobs(selectedDate);
@@ -260,7 +370,10 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
     if (activePage === 7) loadInvoices();
     if (activePage === 4) { loadVehicles(); loadTechs(); }
     if (activePage === 5) loadCustomers();
-  }, [activePage, selectedDate, loadJobs, loadTechs, loadEstimates, loadInvoices, loadVehicles, loadCustomers]);
+    if (activePage === 8) { loadReportJobs(); loadTechs(); loadVehicles(); loadRetentionQueue(); }
+    if (activePage === 9) loadExportRequests();
+    if (activePage === 10) loadTeam();
+  }, [activePage, selectedDate, loadJobs, loadTechs, loadEstimates, loadInvoices, loadVehicles, loadCustomers, loadReportJobs, loadRetentionQueue, loadTeam, loadExportRequests]);
 
   // Loaded once on mount (regardless of active page) so the KPI grid and
   // greeting line reflect real numbers from the moment the dashboard opens,
@@ -332,10 +445,15 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
   const platformFeeMtd = thisMonthPaid.reduce((sum, i) => sum + Number(i.platform_fee || 0), 0);
   const processedMtd = thisMonthPaid.reduce((sum, i) => sum + Number(i.total || 0), 0);
   const money = (n) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
+  const flash = message => { setToast(message); setTimeout(() => setToast(''), 2800); };
+  const displayTechs = realTechs !== null ? realTechs : mockTechnicians;
 
   const kpis = [
     { label: selectedDate === null ? 'ALL JOBS' : selectedDate === TODAY_STR ? "TODAY'S JOBS" : 'JOBS THIS DAY', value: activeJobs.length, sub: `${activeJobs.filter(j => j.status === 'on_site').length} on site · ${activeJobs.filter(j => j.status === 'en_route').length} en route`, color: 'green' },
-    { label: 'TECHS ON CLOCK', value: '6 of 9', sub: '3 off / PTO today' },
+    // No clock-in/out event exists in the schema (HANDOFF.md §28), so "on
+    // clock" can't be computed for real — a real, if less specific, active-
+    // roster count instead of a fabricated on-clock split.
+    { label: 'ACTIVE TECHNICIANS', value: String(displayTechs.length), sub: `${displayTechs.filter(t => t.password_changed !== false).length} finished setup` },
     { label: 'AWAITING APPROVAL', value: String(pendingEstimates.length), sub: `${pendingEstimates.filter(e => e.doc_type === 'estimate').length} estimates · ${pendingEstimates.filter(e => e.doc_type === 'change_order').length} change orders`, color: 'amber' },
     { label: 'UNPAID INVOICES', value: money(unpaidTotal), sub: `${unpaidInvoices.length} invoice${unpaidInvoices.length === 1 ? '' : 's'} outstanding` },
     { label: 'PLATFORM FEE (MTD)', value: money(platformFeeMtd), sub: `1.95% · ${money(processedMtd)} processed` },
@@ -343,10 +461,33 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
   const displayVehicles = realVehicles ?? [];
   const displayCustomers = realCustomers ?? [];
   const filteredCustomers = displayCustomers.filter(c => [c.household_name, c.primary_contact_name, c.primary_phone, c.email, c.service_address].filter(Boolean).join(' ').toLowerCase().includes(search.toLowerCase()));
-  const flash = message => { setToast(message); setTimeout(() => setToast(''), 2800); };
-  const requestExport = () => { const entry = { requested: now.toLocaleString('sv-SE').slice(0, 16), type: 'Custom data archive', by: 'Marcus Reyes', size: `${(include.length * .34).toFixed(1)} GB`, status: 'Queued' }; setExports(e => [entry, ...e]); flash('Export request queued. A secure link will be delivered when ready.'); setTimeout(() => setExports(e => e.map((x, i) => i === 0 ? { ...x, status: 'Ready' } : x)), 1600); };
+
+  const requestExport = async () => {
+    setExportSubmitting(true);
+    try {
+      await api.createExportRequest({ export_type: exportType, output_format: exportFormat, include_categories: include });
+      flash('Export request submitted — queued for processing.');
+      await loadExportRequests();
+    } catch (err) {
+      flash(err.message || 'Failed to submit export request.');
+    } finally {
+      setExportSubmitting(false);
+    }
+  };
+
+  const toggleRetentionPause = async (row) => {
+    setRetentionBusyId(row.customer_id);
+    try {
+      await api.updateRetentionFlag(row.customer_id, !row.paused);
+      await loadRetentionQueue();
+    } catch (err) {
+      flash(err.message || 'Failed to update retention queue.');
+    } finally {
+      setRetentionBusyId(null);
+    }
+  };
+
   const pages = ['Live dispatch', 'Approvals queue', 'Technicians', 'Fleet & vehicles', 'Customer database', 'Live field data', 'Invoices & payments', 'Reports & analytics', 'Data archive & export', 'Team & access', 'Knowledge Base'];
-  const displayTechs = realTechs !== null ? realTechs : mockTechnicians;
   // add-technician/list-technicians are owner_admin-only server-side
   // (backend/sql/006_technicians_fix_identity.sql) — hide the write action
   // for other roles instead of letting them hit a 403 on submit.
@@ -441,14 +582,80 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
           </DataTable>
         )}
       </Panel>
-      <Panel num="6" title="Live field data stream — Job FL-2847 (Master Bath Remodel)" actions={<><Button>📄 View full timeline</Button><Button>↓ Download job file</Button></>}><div className="field-event-list">{[['07:58 AM', 'GPS · GEOFENCE ENTRY', 'Taylor & Miguel arrived on site. Labor clock started automatically.', 'View map'], ['08:12 AM', 'PHOTO · VOICE-TAGGED', '“Pre-demo condition of shower pan. Note tile separation at north wall.”', 'View photo'], ['09:28 AM', 'PHOTO · VOICE-TAGGED', '“Rotted subfloor located at joist bay 3. Will need change order for HardieBacker and joist sister.”', 'View photo'], ['09:32 AM', 'BARCODE SCAN · TRUCK INVENTORY', '3× HardieBacker cement board (36×60) · Auto-billed to job at $28.99 each', 'View parts'], ['10:15 AM', 'SMS · CUSTOMER NOTIFICATION', 'Text sent to Sarah Anderson: “Change order ready for review. Tap link to sign.”', 'View SMS log'], ['10:18 AM', 'E-SIGNATURE · CUSTOMER APPROVED', 'Sarah Anderson e-signed change order remotely. Now awaits your final go-ahead to bill.', 'View signed doc']].map(([time, type, description, action]) => <div className="field-event" key={time + type}><time>{time}</time><Activity size={17} /><div><label>{type}</label><p>{description}</p></div><Button>{action}</Button></div>)}</div></Panel>
+      <Panel num="6" title={liveFeed === null ? 'Live field data stream' : `Live field data stream — ${liveFeed.length} job${liveFeed.length === 1 ? '' : 's'} in progress`} actions={<span className="muted">Auto-refreshes every 20s while this panel is open</span>}>
+        {liveFeedError && <div className="tech-error-banner">{liveFeedError}</div>}
+        {liveFeedLoading ? <div className="loading-roster">Loading live feed…</div> : !liveFeed || liveFeed.length === 0 ? <div className="loading-roster">No jobs are en route or on site right now.</div> : (
+          <div className="live-feed-jobs">
+            {liveFeed.map(job => <LiveFeedJobCard key={job.id} job={job} onViewFile={() => setViewingJobFileId(job.id)} />)}
+          </div>
+        )}
+      </Panel>
       <Panel num="7" title="Invoices & payments" actions={<Button>↓ Export CSV</Button>}>
         <Invoices invoices={realInvoices} loading={invoicesLoading} />
         <div className="reconciliation"><b>Reconciliation summary — month to date</b><p><strong>{money(processedMtd)} processed</strong> · {money(platformFeeMtd)} platform fee withheld · <strong>{money(processedMtd - platformFeeMtd)} net</strong> to your account.</p></div>
       </Panel>
-      <Panel num="8" title="Reports & analytics" actions={<><Button><CalendarDays size={15} /> Change date range</Button><Button>↓ Export report</Button></>}><Reports vehicles={displayVehicles} /><Retention paused={paused} setPaused={setPaused} /></Panel>
-      <Panel num="9" title="Data archive & export" actions={<span className="muted">Request historical data from FieldLoop · download to your local system</span>}><div className="ownership"><Archive size={21} /><div><b>You own your data. FieldLoop retains it for you.</b><p>Every job, photo, voice note, invoice, and payment record is exportable. Exports are watermarked and delivered through a secure 72-hour download link.</p></div></div><div className="export-form"><h3>Request a new data export</h3><div className="form-grid"><select><option>All records (full company archive)</option><option>Jobs only</option><option>Invoices only</option></select><select><option>Jan 01, 2026 → Jul 21, 2026</option></select><select><option>ZIP (CSV + PDF + JPEG)</option><option>CSV-only</option><option>PDF-only</option></select></div><div className="include-chips">{['Job records', 'Customer records', 'Estimates & change orders', 'Invoices & payments', 'Site photos (14,280 files)', 'Voice notes / transcripts', 'GPS timelines', 'Barcode scans / parts', 'SMS transcripts', 'Reconciliation reports'].map(item => <button key={item} className={include.includes(item) ? 'selected' : ''} onClick={() => setInclude(x => x.includes(item) ? x.filter(y => y !== item) : [...x, item])}>{include.includes(item) ? '✓ ' : ''}{item}</button>)}</div><div className="export-submit"><span>Estimated size: <b>{(include.length * .34).toFixed(1)} GB</b> · Estimated ready: ~45 minutes · Delivered to {tenant.email}</span><Button primary onClick={requestExport}><Download size={15} /> Request export</Button></div></div><DataTable headers={['REQUESTED', 'TYPE / RANGE', 'REQUESTED BY', 'SIZE', 'STATUS', 'ACTION']}>{exports.map((e, i) => <tr key={e.requested}><td>{e.requested}</td><td>{e.type}</td><td>{e.by}</td><td>{e.size}</td><td><Pill tone={e.status === 'Ready' ? 'green' : e.status === 'Queued' ? 'blue' : 'gray'}>{e.status === 'Ready' ? '✓ ' : '◐ '}{e.status}</Pill></td><td><Button onClick={() => flash(e.status === 'Ready' ? 'Secure download would open here.' : 'Export re-requested.')}>{e.status === 'Ready' ? '↓ Download (60hr left)' : 'Re-request'}</Button></td></tr>)}</DataTable></Panel>
-      <Panel num="10" title="Team & access — who at Luxe can log in" actions={<><Button><FileText size={15} /> View audit log</Button><Button primary><Plus size={15} /> Invite team member</Button></>}><div className="owner-warning">⚠ <div><b>Owner-only section</b><p>Only Owner/Admin users can change team roles. Marcus J. Reyes is the current designated administrator; transfers require FieldLoop Support verification.</p></div></div><Team /><Permissions /><div className="policy-grid">{[['PASSWORD MINIMUM', '12 characters + complexity'], ['MFA REQUIREMENT', 'Required · TOTP or biometric'], ['SESSION TIMEOUT', '20 min idle · 8 hr max'], ['PASSWORD ROTATION', '90 days · admin can enforce'], ['FAILED LOGIN LOCKOUT', '5 attempts · 15 min lockout'], ['SUSPICIOUS LOGIN ALERTS', 'Owner notified via SMS']].map(([a,b]) => <div key={a}><label>{a}</label><span>{b}</span></div>)}</div></Panel>
+      <Panel num="8" title="Reports & analytics" actions={<span className="muted">Technician stats are all-time · Retention queue below is real, computed from real job/customer data</span>}>
+        <div className="reports">
+          <TechnicianJobReport jobs={reportJobs} technicians={displayTechs} loading={reportJobsLoading} />
+          <FleetHealthReport vehicles={displayVehicles} />
+        </div>
+        <RetentionQueue queue={retentionQueue} loading={retentionLoading} busyId={retentionBusyId} onTogglePause={toggleRetentionPause} />
+      </Panel>
+      <Panel num="9" title="Data archive & export" actions={<span className="muted">Request tracking is real · file delivery is still being built</span>}>
+        <div className="ownership"><Archive size={21} /><div><b>You own your data. FieldLoop retains it for you.</b><p>Every request below is tracked for real. Automatic delivery — watermarked files via a secure 72-hour download link — isn't built yet; a FieldLoop team member can fulfill a request manually in the meantime.</p></div></div>
+        <div className="export-form">
+          <h3>Request a new data export</h3>
+          <div className="form-grid">
+            <select value={exportType} onChange={e => setExportType(e.target.value)}>
+              <option value="full">All records (full company archive)</option>
+              <option value="jobs">Jobs only</option>
+              <option value="invoices">Invoices only</option>
+              <option value="single_job">Single job</option>
+              <option value="media_only">Media only</option>
+            </select>
+            <select value={exportFormat} onChange={e => setExportFormat(e.target.value)}>
+              <option value="zip">ZIP (CSV + PDF + JPEG)</option>
+              <option value="csv">CSV-only</option>
+              <option value="pdf">PDF-only</option>
+            </select>
+          </div>
+          <div className="include-chips">{['Job records', 'Customer records', 'Estimates & change orders', 'Invoices & payments', 'Site photos', 'Voice notes / transcripts', 'GPS timelines'].map(item => <button key={item} className={include.includes(item) ? 'selected' : ''} onClick={() => setInclude(x => x.includes(item) ? x.filter(y => y !== item) : [...x, item])}>{include.includes(item) ? '✓ ' : ''}{item}</button>)}</div>
+          <div className="export-submit"><span>Delivered to {tenant.email} once ready</span><Button primary onClick={requestExport} disabled={exportSubmitting}><Download size={15} /> {exportSubmitting ? 'Submitting…' : 'Request export'}</Button></div>
+        </div>
+        {exportRequestsLoading ? <div className="loading-roster">Loading export history…</div> : (exportRequests ?? []).length === 0 ? <div className="loading-roster">No export requests yet.</div> : (
+          <DataTable headers={['REQUESTED', 'TYPE', 'FORMAT', 'INCLUDES', 'STATUS']}>
+            {exportRequests.map(r => <tr key={r.id}>
+              <td>{new Date(r.requested_at).toLocaleString('sv-SE').slice(0, 16)}</td>
+              <td>{r.export_type.replace('_', ' ')}</td>
+              <td>{r.output_format.toUpperCase()}</td>
+              <td>{(r.include_categories || []).join(', ') || '—'}</td>
+              <td><Pill tone={r.status === 'ready' ? 'green' : r.status === 'failed' || r.status === 'expired' ? 'gray' : 'blue'}>{r.status}</Pill></td>
+            </tr>)}
+          </DataTable>
+        )}
+      </Panel>
+      <Panel num="10" title="Team & access" actions={<Button onClick={() => { const next = !showAuditLog; setShowAuditLog(next); if (next && auditLog === null) loadAuditLog(); }}><FileText size={15} /> {showAuditLog ? 'Hide' : 'View'} audit log</Button>}>
+        <div className="owner-warning">⚠ <div><b>One role today</b><p>contractor_users currently only supports Owner/Admin — a full multi-role team system (dispatcher, bookkeeper, field lead, with real permission gating across the dashboard) is planned but not built yet. See HANDOFF.md §28.</p></div></div>
+        {teamLoading ? <div className="loading-roster">Loading team…</div> : (
+          <DataTable headers={['TEAM MEMBER', 'ROLE', 'MFA', 'LAST LOGIN']}>
+            {(realTeam ?? []).map(t => <tr key={t.id}>
+              <td><Avatar name={t.email} /> {t.email}</td>
+              <td><Pill tone={t.is_designated_admin ? 'green' : 'blue'}>{t.role}{t.is_designated_admin ? ' · designated admin' : ''}</Pill></td>
+              <td><Status color={t.mfa_enabled ? 'green' : 'gray'}>{t.mfa_enabled ? '✓ Enabled' : 'Not enabled'}</Status></td>
+              <td>{t.last_login_at ? new Date(t.last_login_at).toLocaleString() : 'Not tracked yet'}</td>
+            </tr>)}
+          </DataTable>
+        )}
+        {showAuditLog && <div className="audit-log">
+          <h3>Recent account activity</h3>
+          <p className="muted" style={{ fontSize: '12px' }}>Logged by FieldLoop for security/compliance — mostly staff-side actions on your account (onboarding, support), not a full team-activity feed.</p>
+          {auditLogLoading ? <div className="loading-roster">Loading activity…</div> : (auditLog ?? []).length === 0 ? <div className="loading-roster">No recorded activity yet.</div> : (
+            <DataTable headers={['WHEN', 'ACTION', 'DETAIL', 'BY']}>
+              {auditLog.map(e => <tr key={e.id}><td>{new Date(e.timestamp).toLocaleString()}</td><td>{e.action}</td><td>{e.field_accessed || '—'}</td><td>{e.actor}</td></tr>)}
+            </DataTable>
+          )}
+        </div>}
+      </Panel>
       <Panel num="11" title="Knowledge Base — submit a fact" actions={<span className="muted">Reviewed by FieldLoop before it's searchable</span>}><KnowledgeBaseSubmission flash={flash} /></Panel>
       <footer><Button><Download size={15} /> Export dashboard view</Button><Button>? Contact support</Button><Button primary disabled>✓ All caught up</Button></footer>
     </main></div>
@@ -1990,10 +2197,82 @@ function Invoices({ invoices, loading }) {
     {invoices.map(inv => <InvoiceRow key={inv.id} invoice={inv} />)}
   </DataTable>;
 }
-function Reports({ vehicles }) { const efficiency = [['Taylor R.', 133], ['Miguel S.', 118], ['Devon W.', 104], ['Ben N.', 100], ['Jake A.', 85], ['Chris D.', 74], ['Raul O. (apprentice)', 58]]; return <div className="reports"><article><h3>Technician efficiency <small>Flat-rate billed vs. GPS-clocked · last 30 days</small></h3>{efficiency.map(([name, pct]) => <div className="bar-row" key={name}><span>{name}</span><div><i className={pct >= 100 ? 'green' : pct >= 75 ? 'amber' : 'red'} style={{ width: `${Math.min(pct / 150 * 100, 100)}%` }} /></div><b className={pct >= 100 ? 'green' : pct >= 75 ? 'amber' : 'red'}>{pct}%</b></div>)}</article><article><h3>Unapplied Time (Labor Bleed) <small>last 30 days</small></h3><strong className="big-stat">47.5 hrs</strong><p>~$4,512 in unbilled labor · 6.8% of total tech hours</p>{[['Waiting on parts delivery', '21.0 hrs'], ['Customer approval delays', '14.5 hrs'], ['Rework / callbacks', '7.5 hrs'], ['Weather / unscheduled', '4.5 hrs']].map(x => <div className="simple-row" key={x[0]}><span>{x[0]}</span><b>{x[1]}</b></div>)}</article><article><h3>Fleet Health — OBD-II Monitoring</h3>{vehicles.length === 0 ? <p className="muted" style={{ fontSize: '12px' }}>No vehicles added yet.</p> : vehicles.map(v => { const health = vehicleHealth(v); return <div className="simple-row" key={v.id}><Status color={health.color}>{v.unit_number}{v.make || v.model ? ` · ${[v.make, v.model].filter(Boolean).join(' ')}` : ''}</Status><b className={health.color}>{health.label}</b></div>; })}</article></div>; }
-function Retention({ paused, setPaused }) { const rows = [['TODAY', 'Delgado, R. — Day-1 review request · FL-2831', 'Queued 5:00 PM'], ['TOMORROW', 'Whitfield, K. — Day-1 review request · FL-2830', 'Queued 4:00 PM'], ['JUL 24', 'Anderson, S. — 3-month check-in · FL-2778', 'Queued'], ['AUG 04', 'Ramos, J. — 12-month anniversary · FL-2612', 'Queued']]; return <article className="retention"><h3>Retention queue — automated customer follow-ups</h3>{rows.map(([date, description, time], i) => <div key={date}><Pill tone="gray">{date}</Pill><span>{description}</span><small>{paused.includes(i) ? 'Paused' : time}</small><Button onClick={() => setPaused(p => p.includes(i) ? p.filter(x => x !== i) : [...p, i])}>{paused.includes(i) ? 'Resume' : 'Pause'}</Button></div>)}</article>; }
-function Team() { const team = [['Marcus J. Reyes', 'marcus@luxerenovationsrq.com', 'Owner / Admin', 'Today · 8:12 AM'], ['Diana Reyes', 'diana@luxerenovationsrq.com', 'Office Mgr / Dispatcher', 'Today · 7:48 AM'], ['Sofia Gonzalez', 'sofia@luxerenovationsrq.com', 'Bookkeeper / AP', 'Yesterday · 4:31 PM'], ['Tyler Brooks', 'tyler@luxerenovationsrq.com', 'Field Ops Lead', 'Today · 6:52 AM'], ['9× Technicians', 'Individual mobile logins', 'Technician (mobile only)', 'Various']]; return <DataTable headers={['TEAM MEMBER', 'EMAIL', 'ROLE', 'MFA', 'LAST LOGIN', 'ACTIONS']}>{team.map((t, i) => <tr key={t[0]}><td><Avatar name={t[0]} /> {t[0]}</td><td>{t[1]}</td><td><Pill tone={i === 0 ? 'green' : i === 1 ? 'blue' : i === 2 ? 'purple' : 'amber'}>{t[2]}</Pill></td><td><Status>✓ {i === 4 ? 'Biometric' : 'TOTP'}</Status></td><td>{t[3]}</td><td><Button>Edit</Button>{i > 0 && i < 4 && <Button>Remove</Button>}{i === 4 && <Button>Manage</Button>}</td></tr>)}</DataTable>; }
-function Permissions() { const rows = [['Owner/Admin (Marcus)', '✓ Full', '✓ Approve', '✓ Full', '✓ Full', '✓ Manage', '✓ Request', '✓ Full'], ['Office Mgr/Dispatcher', '✓ Full', '◐ Send only', '◐ View only', '✓ Full', '✕ No', '◐ Request', '✕ No'], ['Bookkeeper/AP', '◐ View only', '◐ View only', '✓ Full', '◐ Billing only', '✕ No', '✓ Request', '✕ No'], ['Field Ops Lead', '◐ Assign techs', '◐ Create only', '✕ No', '◐ Contact only', '✕ No', '✕ No', '✕ No']]; return <div className="permissions"><h3>Role permissions matrix</h3><DataTable headers={['ROLE AT LUXE', 'JOBS & DISPATCH', 'ESTIMATES', 'INVOICES', 'CUSTOMER PII', 'TEAM & ACCESS', 'DATA ARCHIVE', 'COMPANY SETTINGS']}>{rows.map(row => <tr key={row[0]}>{row.map((cell, i) => <td key={i}>{cell}</td>)}</tr>)}</DataTable></div>; }
+// Real "jobs completed & billed per technician", replacing the old mock's
+// fabricated "billed vs. GPS-clocked %" — there is no clock-in/out event
+// anywhere in the schema (jobs.scheduled_end is null on every real job,
+// confirmed live) so that percentage had no real signal to compute, not
+// just "not much data yet". This metric is honestly different but genuinely
+// real. See HANDOFF.md §28.
+const COMPLETED_JOB_STATUSES = ['complete', 'closed', 'invoiced', 'paid'];
+function TechnicianJobReport({ jobs, technicians, loading }) {
+  if (loading) return <article><h3>Jobs completed & billed <small>per technician, all-time</small></h3><div className="loading-roster">Loading…</div></article>;
+  const completed = (jobs ?? []).filter(j => COMPLETED_JOB_STATUSES.includes(j.status));
+  const rows = technicians.filter(t => t.is_active !== false).map(t => {
+    const techJobs = completed.filter(j => j.lead_technician_id === t.id);
+    const billed = techJobs.reduce((sum, j) => sum + Number(j.total_invoiced || 0), 0);
+    return { id: t.id || t.name, name: t.full_name || t.name, count: techJobs.length, billed };
+  }).sort((a, b) => b.count - a.count);
+  return <article><h3>Jobs completed & billed <small>per technician, all-time</small></h3>{rows.length === 0 ? <p className="muted" style={{ fontSize: '12px' }}>No active technicians yet.</p> : rows.map(r => <div className="simple-row" key={r.id}><span>{r.name}</span><b>{r.count} job{r.count === 1 ? '' : 's'} · ${r.billed.toLocaleString()} billed</b></div>)}</article>;
+}
+function FleetHealthReport({ vehicles }) {
+  return <article><h3>Fleet Health — OBD-II Monitoring</h3>{vehicles.length === 0 ? <p className="muted" style={{ fontSize: '12px' }}>No vehicles added yet.</p> : vehicles.map(v => { const health = vehicleHealth(v); return <div className="simple-row" key={v.id}><Status color={health.color}>{v.unit_number}{v.make || v.model ? ` · ${[v.make, v.model].filter(Boolean).join(' ')}` : ''}</Status><b className={health.color}>{health.label}</b></div>; })}</article>;
+}
+// Real due/paused state, computed from real jobs + customers.retention_flags
+// (see backend/functions/list-retention-queue/index.js's header for the
+// documented anchor-date approximation and the 3-vs-4-checkpoint schema
+// gap). Nothing here ever sends anything — no automated dispatch exists yet.
+function RetentionQueue({ queue, loading, busyId, onTogglePause }) {
+  if (loading) return <article className="retention"><h3>Retention queue — automated customer follow-ups</h3><div className="loading-roster">Loading…</div></article>;
+  const rows = queue ?? [];
+  return <article className="retention">
+    <h3>Retention queue — automated customer follow-ups</h3>
+    {rows.length === 0 ? <p className="muted" style={{ fontSize: '12px' }}>No follow-ups due — nothing here until a job is marked complete.</p> : rows.map(r => <div key={r.customer_id}>
+      <Pill tone={r.paused ? 'gray' : r.due_now ? 'amber' : 'blue'}>{r.due_now ? 'DUE NOW' : new Date(r.due_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</Pill>
+      <span>{r.customer_name} — {r.checkpoint_label}{r.job_id_public ? ` · ${r.job_id_public}` : ''}</span>
+      <small>{r.paused ? 'Paused' : r.due_now ? 'Due now' : `Due ${new Date(r.due_at).toLocaleDateString()}`}</small>
+      <Button onClick={() => onTogglePause(r)} disabled={busyId === r.customer_id}>{busyId === r.customer_id ? '…' : r.paused ? 'Resume' : 'Pause'}</Button>
+    </div>)}
+  </article>;
+}
+
+// One card per en_route/on_site job, backing the real Panel 6 (Live field
+// data stream — HANDOFF.md §30). Reuses JobFileModal's exact event-row
+// shape/labels (FIELD_EVENT_LABELS) and jobStatusColor — this card shows
+// only the most recent few events (already capped server-side by
+// list-live-feed); "View job file" reuses the existing modal for the
+// complete history instead of this component duplicating that view.
+function LiveFeedJobCard({ job, onViewFile }) {
+  const customer = job.customers;
+  const technician = job.technicians;
+  return <article className="live-feed-job">
+    <div className="live-feed-job-header">
+      <div>
+        <label>{job.job_id_public}</label>
+        <h3>{customer?.household_name || 'Unknown customer'}</h3>
+        <p>{job.service_address}</p>
+      </div>
+      <div className="live-feed-job-meta">
+        <Status color={jobStatusColor(job.status)}>{(job.status || '').replace('_', ' ')}</Status>
+        {technician?.full_name && <Pill tone="gray">👤 {technician.full_name}</Pill>}
+        <Button onClick={onViewFile}>View job file</Button>
+      </div>
+    </div>
+    {job.events.length === 0 ? <p className="muted" style={{ fontSize: '12px' }}>No events logged yet.</p> : (
+      <div className="field-event-list">
+        {job.events.map(e => <div className="field-event" key={e.id}>
+          <time>{new Date(e.event_ts).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</time>
+          <Activity size={17} />
+          <div>
+            <label>{FIELD_EVENT_LABELS[e.event_type] || e.event_type}{e.technician_name ? ` · ${e.technician_name}` : ''}</label>
+            {e.transcript && <p>{e.transcript}</p>}
+            {!e.transcript && e.s3_object_key && <p>{e.s3_object_key.split('/').pop()}</p>}
+          </div>
+          <span />
+        </div>)}
+      </div>
+    )}
+  </article>;
+}
 
 const KB_SUBMISSION_STATUS_TONE = { pending: 'amber', approved: 'green', rejected: 'gray', superseded: 'gray' };
 

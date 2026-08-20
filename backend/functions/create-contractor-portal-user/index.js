@@ -35,14 +35,22 @@ exports.handler = async (event) => {
     });
     if (insertError) throw insertError;
 
-    await supabase.from('access_audit_log').insert({
+    // 'create' isn't a valid access_audit_log.action value (only
+    // update/view/reveal/delete/export pass the real CHECK constraint —
+    // verified live, HANDOFF.md §12/§28) — every prior call silently failed
+    // to write this row, and the error was never checked. Fixed to 'update'
+    // (matching every other creation-type action logged elsewhere in this
+    // codebase, e.g. add-technician) and the error is now logged instead of
+    // ignored — a failed audit write should never block portal-user creation.
+    const { error: auditErr } = await supabase.from('access_audit_log').insert({
       user_id: flUser.id,
       contractor_id: contractorId,
-      action: 'create',
+      action: 'update',
       field_accessed: 'contractor_dashboard_credentials',
       ip_address: event.requestContext?.http?.sourceIp || event.requestContext?.identity?.sourceIp || null,
       user_agent: event.headers?.['user-agent'] || event.headers?.['User-Agent'] || null,
     });
+    if (auditErr) console.error('Failed to write access_audit_log row:', auditErr.message);
 
     return { statusCode: 200, headers: { 'Access-Control-Allow-Origin': '*' }, body: JSON.stringify({ success: true }) };
   } catch (err) {
