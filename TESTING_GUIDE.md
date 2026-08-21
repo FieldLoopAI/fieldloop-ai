@@ -10,15 +10,19 @@ Where a feature's real behavior can't be confirmed from the app alone (e.g. it d
 
 ## 0. Roles cheat-sheet (reference while testing)
 
-| Role | Where they log in | What they can do |
+There is one login page for everyone, at `/` (also reachable at `/dashboard`) — the app detects which population a login belongs to *after* authenticating, and routes accordingly. There's no separate staff login page anymore; `/staff/login` is kept only as a redirect stub back to `/` for old bookmarks.
+
+| Role | Where they land after logging in at `/` | What they can do |
 |---|---|---|
-| `admin` | `/staff/login` | Full read/write everywhere, only role that can export PDF, edit system settings, reveal Stripe, terminate a contractor, and see Platform Overview |
-| `onboarding` | `/staff/login` | Full read/write on contractor records, cannot touch financials/PDF export/system settings/Platform Overview |
-| `finance` | `/staff/login` | Read-only; sees financials (bank fields revealable) but not PII |
-| `support` | `/staff/login` | Read-only; sees contact info only, PII/financials/compliance numbers masked |
-| `jenex_dev` | `/staff/login` | Read-only, restricted to sandbox contractors only — **no test account exists yet, mark as To Be Verified** |
-| `owner_admin` (contractor) | `/` or `/dashboard` | Full contractor dashboard — only role that exists for contractor logins today |
+| `admin` | `/staff/platform` (Platform Overview) | Full read/write everywhere, only role that can export PDF, edit system settings, reveal Stripe, terminate a contractor, and see Platform Overview |
+| `onboarding` | `/staff/registration` (Registration Dashboard) | Full read/write on contractor records, cannot touch financials/PDF export/system settings/Platform Overview |
+| `finance` | `/staff/registration` | Read-only; sees financials (bank fields revealable) but not PII |
+| `support` | `/staff/registration` | Read-only; sees contact info only, PII/financials/compliance numbers masked |
+| `jenex_dev` | `/staff/registration` | Read-only, restricted to sandbox contractors only — **no test account exists yet, mark as To Be Verified** |
+| `owner_admin` (contractor) | `/` (Command Dashboard renders in place, no redirect) | Full contractor dashboard — only role that exists for contractor logins today |
 | Technician | Mobile app only (not in this repo) — sets password via `/technician-setup?token=...` web fallback first | No web dashboard access at all, by design |
+
+`/staff` itself is not a page — it's a dispatcher that redirects a signed-in staff user to the row above based on their role (admin → Platform Overview, everyone else → Registration). Direct navigation/bookmarks to `/staff` still work, they just bounce onward immediately.
 
 **Test accounts (reuse these, don't create new ones unless a step tells you to):**
 
@@ -38,28 +42,26 @@ Where a feature's real behavior can't be confirmed from the app alone (e.g. it d
 
 ### Step 1 – Open the application
 1. Start the app (`npm run dev`) and open `http://localhost:5173` in Chrome or Edge (voice features later in this guide require a Chromium browser).
-2. You should land on the **Contractor Command Dashboard login page** (kicker "SECURE SIGN IN", heading "Welcome back") — this is the `/` route's default.
-3. Verify: page loads with no console errors, the FieldLoop/RRDMSS branding panel is visible on the left.
+2. You should land on the **unified FieldLoop login page** (kicker "SECURE SIGN IN", heading "Welcome back", subheading "Sign in with your FieldLoop account.") — this is the `/` route's default, and it's the same page contractors and staff both sign in from. The page itself has no way to know which one you are; that's resolved after you sign in.
+3. Verify: page loads with no console errors, the FieldLoop branding panel is visible on the left, and there's no "Sign up"/"Create account" link (staff and contractor accounts are both provisioned manually, not self-service — **expected, not a bug**).
 4. Go to Step 2.
 
 ### Step 2 – Access the Master User (Staff Admin) account
-There is no self-service "create account" screen for staff users — staff accounts are provisioned manually by a developer directly in Supabase, not through the app UI. **This is expected, not a bug.** For this guide, use the pre-provisioned admin test account below rather than trying to register a new one.
-1. In the browser address bar, navigate to `http://localhost:5173/staff/login`.
-2. Verify: the page changes to the Staff Registration Workspace login (kicker "STAFF SIGN IN", heading "Welcome back", "FIELDLOOP" logo, subheading "Onboard and manage contractor records.").
-3. If you want to confirm the "no self-serve signup" behavior: note there is no "Sign up" or "Create account" link anywhere on this page — mark self-service master-user creation as **not applicable / by design**.
-4. Go to Step 3.
+There is no self-service "create account" screen for staff users — staff accounts are provisioned manually by a developer directly in Supabase, not through the app UI. For this guide, use the pre-provisioned admin test account below rather than trying to register a new one. There's no separate staff login page to navigate to anymore — you'll sign in with staff credentials on the same page from Step 1, and the app will detect the role and route you accordingly.
+1. Go to Step 3.
 
 ### Step 3 – Log in as the Master User (Staff Admin)
-1. On the Staff Sign In form, enter:
+1. On the login form at `http://localhost:5173/`, enter:
    - **Email**: `a@a.com`
    - **Password**: `TestPass123!FL`
-2. Click **"Sign in to Staff Workspace"** (button text changes to "Signing in…" briefly).
-3. Verify: you land on `/staff` with the header reading "User: … (admin)" and a status card showing "AUTH LEVEL: Full read/write".
-4. **Invalid-login check**: sign out (see Step 10) and retry with a wrong password. Verify you see the error "The email or password is incorrect. Please try again." and remain on the login page. Log back in with the correct credentials before continuing.
-5. Go to Step 4.
+2. Click **"Sign in"** (button text changes to "Signing in…" briefly).
+3. Verify: you're redirected to `/staff/platform` (Platform Overview) — admin is the only role that lands there by default; the header reads "{email} · admin".
+4. **Invalid-login check**: sign out (see Step 18) and retry with a wrong password. Verify you see the error "The email or password is incorrect. Please try again." and remain on the login page. Log back in with the correct credentials before continuing.
+5. Platform Overview itself is toured in full in Part C (Steps 39–41) — for now, click **"Registration Dashboard"** in the header to reach the onboarding wizard this part of the guide walks through. Verify it takes you to `/staff/registration` with the header reading "User: … (admin)" and a status card showing "AUTH LEVEL: Full read/write".
+6. Go to Step 4.
 
 ### Step 4 – Explore the Master User (Staff) dashboard
-1. In the header bar, confirm you see: the FIELDLOOP logo, a session idle-timer pill, "User: … (admin)", a **"Platform Overview"** button (admin-only — other roles won't see this), a **"Staff Controls"** button, and **"Sign out"**.
+1. In the header bar, confirm you see: the FIELDLOOP logo, a session idle-timer pill, "User: … (admin)", a **"Platform Overview"** button (admin-only — other roles won't see this, and it now takes you back to `/staff/platform` rather than being your landing page), a **"Staff Controls"** button, and **"Sign out"**.
 2. Click **"Staff Controls"** — a drawer opens titled "Operator & Staff Controls" with a **"Reset Idle Timer"** button and a JSON dump labeled "Currently loaded record" (empty/null right now, since no contractor is loaded). Close the drawer.
 3. Note the two landing tabs below the header: **"New Registration"** and **"Existing Contractors"** — as `admin`, "New Registration" is selected by default.
 4. Verify: the "New Registration" panel shows a card "Register a new contractor" with **LEGAL BUSINESS NAME** and **EIN / TAX ID** fields and a **"Create Contractor & Continue"** button.
@@ -155,11 +157,11 @@ There is no self-service "create account" screen for staff users — staff accou
 5. Go to Step 16.
 
 ### Step 16 – Verify other staff roles' permissions (secondary role coverage)
-1. Sign out (Step 21 shows how) and log back in at `/staff/login` as **`test-support@example.com`** / `TestPass123!FL`.
+1. Sign out (Step 18 shows how) and log back in at `http://localhost:5173/` as **`test-support@example.com`** / `TestPass123!FL`. Verify: since `support` isn't `admin`, you land directly on `/staff/registration` (no Platform Overview redirect).
 2. Verify: landing tab defaults to "Existing Contractors" (support can't create). Clicking "New Registration" shows a read-only banner instead of the create form.
 3. Load the test contractor from Step 5. Verify: PII (DOB/SSN/home address) and financials show fully locked with **no REVEAL button**; compliance license/policy numbers show literal `[MASKED]`; **Save Draft**/**Save & Continue**/**Export PDF** are all disabled.
-4. Sign out, log in as **`test-finance@example.com`**. Verify: full business/compliance info visible; PII locked with no reveal; bank routing/account show masked with a **working REVEAL** button; Stripe fully locked; everything still read-only (no save).
-5. Sign out, log in as **`test-onboarding@example.com`**. Verify: full read/write, PII fields masked but revealable, bank fields masked but revealable, Stripe fully locked (only admin can reveal Stripe), **no** "Platform Overview" button in the header (onboarding isn't admin).
+4. Sign out, log in as **`test-finance@example.com`**. Verify: lands on `/staff/registration`; full business/compliance info visible; PII locked with no reveal; bank routing/account show masked with a **working REVEAL** button; Stripe fully locked; everything still read-only (no save).
+5. Sign out, log in as **`test-onboarding@example.com`**. Verify: lands on `/staff/registration`; full read/write, PII fields masked but revealable, bank fields masked but revealable, Stripe fully locked (only admin can reveal Stripe), **no** "Platform Overview" button in the header (onboarding isn't admin).
 6. `jenex_dev` role: **To Be Verified** — no test account currently exists for this role.
 7. Sign out and log back in as the admin (`a@a.com`) before continuing.
 8. Go to Step 17.
@@ -173,7 +175,7 @@ There is no self-service "create account" screen for staff users — staff accou
 
 ### Step 18 – Sign out of the Staff dashboard
 1. Click **"Sign out"** in the header.
-2. Verify you're returned to the `/staff/login` screen.
+2. Verify you're returned to the unified login page at `/`.
 3. Go to Step 19 (Part B).
 
 ---
@@ -181,10 +183,10 @@ There is no self-service "create account" screen for staff users — staff accou
 ## PART B — Contractor Side (Contractor Command Dashboard)
 
 ### Step 19 – Log in as the Contractor
-1. Navigate to `http://localhost:5173/`.
+1. Navigate to `http://localhost:5173/` — the same unified login page from Step 1/3, this time with contractor credentials.
 2. Log in with either the credentials you created in Step 12, or the standing test account: **`pw-contractor-1785321789808@example.com`** / `TestPass123!FL` (recommended, since it already has real jobs/technicians/customers seeded for a fuller test).
-3. **Invalid-login check**: try a wrong password once, verify "The username or password is incorrect. Please try again.", then log in correctly.
-4. Verify: you land on the Command Center with the tenant's real company name in the header, a security banner ("SIGNED IN AS" / "AUTH LEVEL" / "IDLE TIMEOUT"), and a 5-card KPI row (jobs, ACTIVE TECHNICIANS, AWAITING APPROVAL, UNPAID INVOICES, PLATFORM FEE (MTD)).
+3. **Invalid-login check**: try a wrong password once, verify "The email or password is incorrect. Please try again.", then log in correctly.
+4. Verify: since a contractor identity resolves, the dashboard renders in place at `/` (no redirect, unlike a staff login) — you land on the Command Center with the tenant's real company name in the header, a security banner ("SIGNED IN AS" / "AUTH LEVEL" / "IDLE TIMEOUT"), and a 5-card KPI row (jobs, ACTIVE TECHNICIANS, AWAITING APPROVAL, UNPAID INVOICES, PLATFORM FEE (MTD)).
 5. Go to Step 20.
 
 ### Step 20 – Explore the Contractor dashboard shell
@@ -346,7 +348,7 @@ Hold off on deactivating `Test Tech One` until Step 33 (Job workflow), since you
 
 ### Step 38 – Sign out of the Contractor dashboard
 1. Click **"Logout"** in the header.
-2. Verify you're returned to the contractor login page (`/`).
+2. Verify you're returned to the unified login page (`/`).
 3. Go to Step 39 (Part C).
 
 ---
@@ -354,11 +356,10 @@ Hold off on deactivating `Test Tech One` until Step 33 (Job workflow), since you
 ## PART C — Cross-Role Verification (Platform Overview & final checks)
 
 ### Step 39 – Log back in as Staff Admin and open Platform Overview
-1. Go to `http://localhost:5173/staff/login`, log in as `a@a.com` / `TestPass123!FL`.
-2. Click **"Platform Overview"** in the header.
-3. Verify you land on `/staff/platform` with 5 sidebar tabs: **Overview, Contractors, Usage, Revenue, Knowledge Base**.
-4. **Access-control check**: sign out, log in as `test-onboarding@example.com` (non-admin), and confirm navigating directly to `/staff/platform` in the address bar redirects you back to `/staff` — this route is admin-only at the router level, not just hidden in the UI. Sign back in as admin before continuing.
-5. Go to Step 40.
+1. Go to `http://localhost:5173/`, log in as `a@a.com` / `TestPass123!FL`.
+2. Verify you land directly on `/staff/platform` with 5 sidebar tabs: **Overview, Contractors, Usage, Revenue, Knowledge Base** — admin no longer needs to click a "Platform Overview" button after login, it's the default landing page.
+3. **Access-control check**: sign out, log in as `test-onboarding@example.com` (non-admin), and confirm navigating directly to `/staff/platform` in the address bar redirects you away — it bounces through `/staff` (the role dispatcher) and lands on `/staff/registration`, since this route is admin-only at the router level, not just hidden in the UI. Sign back in as admin before continuing.
+4. Go to Step 40.
 
 ### Step 40 – Tour Platform Overview tabs
 1. **Overview tab**: verify KPI cards (Total Contractors, Suspended/Terminated, Active Technicians, Jobs All-Time, Revenue Collected — expect $0, since no real invoicing/payment pipeline exists yet), a contractor-status chart, a "Needs attention" panel, and a KB content-coverage table.
@@ -377,14 +378,14 @@ Hold off on deactivating `Test Tech One` until Step 33 (Job workflow), since you
 6. Go to Step 42.
 
 ### Step 42 – Final login/logout and access-control sweep
-1. Confirm each of the following independently logs in and reaches the expected screen, then logs out cleanly (no leftover session bleeding into the next login):
-   - Staff Admin (`a@a.com`) → `/staff`, sees Platform Overview button.
-   - Staff Onboarding → `/staff`, full read/write, no Platform Overview button.
-   - Staff Finance → `/staff`, read-only, financials visible.
-   - Staff Support → `/staff`, read-only, PII/financials masked.
-   - Contractor (`pw-contractor-...`) → `/`, sees the Command Dashboard.
+1. Confirm each of the following independently logs in at the same unified page (`/`) and reaches the expected screen, then logs out cleanly (no leftover session bleeding into the next login):
+   - Staff Admin (`a@a.com`) → redirected to `/staff/platform`, sees "Registration Dashboard" link.
+   - Staff Onboarding → redirected to `/staff/registration`, full read/write, no Platform Overview button.
+   - Staff Finance → redirected to `/staff/registration`, read-only, financials visible.
+   - Staff Support → redirected to `/staff/registration`, read-only, PII/financials masked.
+   - Contractor (`pw-contractor-...`) → stays on `/`, sees the Command Dashboard (no redirect, since a contractor's dashboard renders in place).
    - `jenex_dev` staff role and direct technician web login: **To Be Verified** — no test account / no web UI exists for these respectively.
-2. Confirm a signed-in-but-wrong-app case: while signed into a *contractor* session, navigate to `/staff/login` — verify it shows its own independent login form rather than reusing the contractor session (the two apps use separate auth checks).
+2. Confirm a signed-in-but-wrong-area case: while signed into a *contractor* session, navigate directly to `/staff` or `/staff/platform` — verify you're bounced back to your own Command Dashboard at `/` rather than shown a login form (a contractor identity has no `fl_users` row, so the staff-side guard treats you as unauthenticated for that area and sends you to `/`, where your still-active contractor session immediately resolves back to the dashboard).
 3. Go to Step 43.
 
 ### Step 43 – Final end-to-end verification checklist
