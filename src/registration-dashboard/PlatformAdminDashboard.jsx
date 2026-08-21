@@ -208,7 +208,7 @@ export default function PlatformAdminDashboard({ staffUser, onLogout }) {
         <strong>Platform Overview</strong>
         <nav>Cross-contractor · not scoped to one tenant</nav>
         <span className="top-user" style={{ marginLeft: 'auto' }}>{staffUser.email} · {staffUser.role}</span>
-        <Link to="/staff"><Button><ArrowLeft size={15} /> Registration Dashboard</Button></Link>
+        <Link to="/staff/registration"><Button><ArrowLeft size={15} /> Registration Dashboard</Button></Link>
         <Button onClick={onLogout}><LogOut size={15} /> Logout</Button>
       </header>
       <div className="dashboard-layout">

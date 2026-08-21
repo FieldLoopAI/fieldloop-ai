@@ -8,11 +8,11 @@
 // the generated Auth password never being logged in add-technician.
 const crypto = require('crypto');
 
-// Placeholder — no real hosting domain exists yet for the web fallback page
-// or the future Flutter deep link. Swap this for the real production
-// origin once it's decided; everything downstream (SMS copy, the
-// /technician-setup route) already treats the link as an opaque URL.
-const SETUP_BASE_URL = 'https://app.fieldloop.io';
+// Real production origin — Amplify Hosting, custom domain app.fieldloopai.com
+// (§30 HANDOFF.md). Everything downstream (SMS copy, the /technician-setup
+// route) already treats the link as an opaque URL, so this is also what the
+// future Flutter deep link will register Associated Domains / App Links against.
+const SETUP_BASE_URL = 'https://app.fieldloopai.com';
 
 function generateSetupToken() {
   return crypto.randomBytes(32).toString('base64url'); // 256 bits — the actual brute-force defense, not rate-limiting

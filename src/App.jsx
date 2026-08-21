@@ -1,26 +1,55 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import ContractorCommandDashboard from './command-dashboard/ContractorCommandDashboard';
-import ContractorLoginPage from './command-dashboard/ContractorLoginPage';
 import { useContractorAuth } from './command-dashboard/useContractorAuth';
-import StaffLoginPage from './registration-dashboard/StaffLoginPage';
+import LoginPage from './shared/LoginPage';
 import RegistrationDashboard from './registration-dashboard/RegistrationDashboard';
 import PlatformAdminDashboard from './registration-dashboard/PlatformAdminDashboard';
 import PlatformContractorDetail from './registration-dashboard/PlatformContractorDetail';
 import { useStaffAuth } from './registration-dashboard/useStaffAuth';
 import TechnicianSetupPage from './technician-setup/TechnicianSetupPage';
 
-function ContractorSection() {
-  const { tenant, session, loading, signOut } = useContractorAuth();
-  if (loading) return null;
-  return tenant
-    ? <ContractorCommandDashboard tenant={tenant} onLogout={signOut} />
-    : <ContractorLoginPage signedInButNoTenant={Boolean(session)} onSignOut={signOut} />;
+// Where a signed-in fl_users role lands: admin gets the cross-contractor
+// Platform Overview, every other staff role gets the Registration wizard
+// (HANDOFF.md §24 — Platform Overview is deliberately admin-only).
+function staffHomePath(role) {
+  return role === 'admin' ? '/staff/platform' : '/staff/registration';
 }
 
+// Single login entry point (app.fieldloopai.com root) for both contractor
+// and staff logins. Which dashboard a session lands on isn't known until
+// after auth — both auth hooks run, and whichever table resolves a row wins.
+function RootSection() {
+  const contractorAuth = useContractorAuth();
+  const staffAuth = useStaffAuth();
+  if (contractorAuth.loading || staffAuth.loading) return null;
+
+  if (contractorAuth.tenant) {
+    return <ContractorCommandDashboard tenant={contractorAuth.tenant} onLogout={contractorAuth.signOut} />;
+  }
+  if (staffAuth.user) {
+    return <Navigate to={staffHomePath(staffAuth.user.role)} replace />;
+  }
+
+  const session = contractorAuth.session || staffAuth.session;
+  if (!session) return <LoginPage />;
+  // Signed in to Supabase Auth, but neither contractor_users nor fl_users
+  // has a matching (linked) row for this identity.
+  return <LoginPage noAccountFound onSignOut={contractorAuth.signOut} />;
+}
+
+// Role dispatcher, not a page — bounces a signed-in staff user to their
+// home screen. Direct navigation/bookmarks to /staff still work.
 function StaffSection() {
   const { user, loading } = useStaffAuth();
   if (loading) return null;
-  if (!user) return <Navigate to="/staff/login" replace />;
+  if (!user) return <Navigate to="/" replace />;
+  return <Navigate to={staffHomePath(user.role)} replace />;
+}
+
+function StaffRegistrationSection() {
+  const { user, loading } = useStaffAuth();
+  if (loading) return null;
+  if (!user) return <Navigate to="/" replace />;
   return <RegistrationDashboard staffUser={user} />;
 }
 
@@ -29,7 +58,7 @@ function StaffSection() {
 function PlatformSection() {
   const { user, loading, signOut } = useStaffAuth();
   if (loading) return null;
-  if (!user) return <Navigate to="/staff/login" replace />;
+  if (!user) return <Navigate to="/" replace />;
   if (user.role !== 'admin') return <Navigate to="/staff" replace />;
   return <PlatformAdminDashboard staffUser={user} onLogout={signOut} />;
 }
@@ -39,7 +68,7 @@ function PlatformSection() {
 function PlatformContractorSection() {
   const { user, loading } = useStaffAuth();
   if (loading) return null;
-  if (!user) return <Navigate to="/staff/login" replace />;
+  if (!user) return <Navigate to="/" replace />;
   if (user.role !== 'admin') return <Navigate to="/staff" replace />;
   return <PlatformContractorDetail />;
 }
@@ -47,10 +76,11 @@ function PlatformContractorSection() {
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<ContractorSection />} />
-      <Route path="/dashboard" element={<ContractorSection />} />
-      <Route path="/staff/login" element={<StaffLoginPage />} />
+      <Route path="/" element={<RootSection />} />
+      <Route path="/dashboard" element={<RootSection />} />
+      <Route path="/staff/login" element={<Navigate to="/" replace />} />
       <Route path="/staff" element={<StaffSection />} />
+      <Route path="/staff/registration" element={<StaffRegistrationSection />} />
       <Route path="/staff/platform" element={<PlatformSection />} />
       <Route path="/staff/platform/contractors/:id" element={<PlatformContractorSection />} />
       <Route path="/technician-setup" element={<TechnicianSetupPage />} />

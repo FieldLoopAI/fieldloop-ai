@@ -46,7 +46,7 @@ Where a feature's real behavior can't be confirmed from the app alone (e.g. it d
 There is no self-service "create account" screen for staff users — staff accounts are provisioned manually by a developer directly in Supabase, not through the app UI. **This is expected, not a bug.** For this guide, use the pre-provisioned admin test account below rather than trying to register a new one.
 1. In the browser address bar, navigate to `http://localhost:5173/staff/login`.
 2. Verify: the page changes to the Staff Registration Workspace login (kicker "STAFF SIGN IN", heading "Welcome back", "FIELDLOOP" logo, subheading "Onboard and manage contractor records.").
-3. *(If you want to confirm the "no self-serve signup" behavior)*: note there is no "Sign up" or "Create account" link anywhere on this page — mark self-service master-user creation as **not applicable / by design**.
+3. If you want to confirm the "no self-serve signup" behavior: note there is no "Sign up" or "Create account" link anywhere on this page — mark self-service master-user creation as **not applicable / by design**.
 4. Go to Step 3.
 
 ### Step 3 – Log in as the Master User (Staff Admin)
