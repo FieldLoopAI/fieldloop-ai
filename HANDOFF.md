@@ -16,7 +16,9 @@ On the **Contractor Command Dashboard**, two more sections are now real and conf
 
 **SES email sending is now partially live** (§29) — a real sender domain (`fieldloopai.com`) and two individually-verified recipient addresses mean `messagingAdapter.js`'s `dev_email` mode (§19, the Phase 1 default) can now deliver genuine emails to those two addresses today; sending to arbitrary/real technician inboxes remains blocked until AWS approves a production-access request, submitted and currently under review as of this writing.
 
-See **Where things left off** (§9) for the Registration Dashboard's testing history, and §10/§12/§13/§14/§15/§16/§17/§18/§19/§23/§27/§28/§30/§31 for everything found and fixed on the Contractor Command Dashboard side since.
+**Login/routing changed** (§32, 2026-08-22): contractors and staff now share one login page at `/` instead of two separate ones, role is resolved after auth and routed accordingly, and `/staff` now defaults an admin to Platform Overview instead of the Registration wizard.
+
+See **Where things left off** (§9) for the Registration Dashboard's testing history, and §10/§12/§13/§14/§15/§16/§17/§18/§19/§23/§27/§28/§30/§31/§32 for everything found and fixed on the Contractor Command Dashboard side since.
 
 ---
 
@@ -24,7 +26,7 @@ See **Where things left off** (§9) for the Registration Dashboard's testing his
 
 Two separate products live in one repo:
 
-1. **Registration Dashboard** (`/staff/login`, `/staff`) — an internal tool for FieldLoop **staff** (roles: `admin`, `onboarding`, `finance`, `support`, `jenex_dev`) to onboard and manage contractor records through an 8-step wizard. **This is what the recent work focused on.** Fully wired to real data.
+1. **Registration Dashboard** (`/staff/registration`) — an internal tool for FieldLoop **staff** (roles: `admin`, `onboarding`, `finance`, `support`, `jenex_dev`) to onboard and manage contractor records through an 8-step wizard. **This is what the recent work focused on.** Fully wired to real data. Staff sign in on the same shared login page as contractors (`/`) — see §32 for the unified-login/role-redirect change.
 2. **Contractor Command Dashboard** (`/`, `/dashboard`) — the contractor-facing product (dispatch, technicians, fleet, customers, invoicing, reports, data export, team management). **Only the login/identity is real** — everything else still renders static mock data from `src/command-dashboard/dashboardData.js`. This was a deliberate scope decision (see §7).
 
 ---
@@ -80,24 +82,27 @@ src/
     api.js                             — fetch wrapper for all Lambda calls (attaches JWT bearer token)
     mockDb.js                          — legacy mock DB; now only used by ContractorCommandDashboard's
                                           non-identity mock panels (jobs/fleet/customers/etc.)
+  shared/
+    LoginPage.jsx                      — single real Supabase Auth login page for both contractors and staff (§32)
   registration-dashboard/
     RegistrationDashboard.jsx          — the 8-step staff wizard, now backed by api.js
-    StaffLoginPage.jsx                 — real Supabase Auth login for staff
     useStaffAuth.js                    — session + fl_users role lookup hook
     steps/Step1..Step8*.jsx            — one component per wizard step
   command-dashboard/
-    ContractorLoginPage.jsx            — real Supabase Auth login for contractors
     useContractorAuth.js               — session + contractor_users lookup hook
     ContractorCommandDashboard.jsx     — receives real `tenant` as a prop; rest of UI still mock
     dashboardData.js                   — mock jobs/technicians/fleet/customers (tenant removed from here)
 ```
 
-**Routes** (`src/App.jsx`):
+**Routes** (`src/App.jsx`, §32):
 | Path | Component | Auth |
 |---|---|---|
-| `/` , `/dashboard` | Contractor login → `ContractorCommandDashboard` | `contractor_users` via Supabase Auth |
-| `/staff/login` | `StaffLoginPage` | — |
-| `/staff` | `RegistrationDashboard` | `fl_users` via Supabase Auth, redirects to `/staff/login` if not signed in |
+| `/` , `/dashboard` | `LoginPage`, or in place `ContractorCommandDashboard` if a contractor identity resolves; redirects to `/staff/platform`/`/staff/registration` if a staff identity resolves instead | Runs both `useContractorAuth`/`useStaffAuth`; whichever table (`contractor_users`/`fl_users`) resolves a row wins |
+| `/staff/login` | — | Compatibility redirect to `/` (no longer a real page) |
+| `/staff` | — | Role dispatcher: redirects to `/staff/platform` (`admin`) or `/staff/registration` (everyone else); redirects to `/` if not signed in |
+| `/staff/registration` | `RegistrationDashboard` | `fl_users` via Supabase Auth, redirects to `/` if not signed in |
+| `/staff/platform` | `PlatformAdminDashboard` | `fl_users`, `admin` only — redirects to `/staff` (→ `/staff/registration`) for other roles, `/` if not signed in |
+| `/staff/platform/contractors/:id` | `PlatformContractorDetail` | Same as `/staff/platform` |
 
 **`src/shared/services/api.js`** is the single place that knows how to call every Lambda. Every function:
 1. Pulls the current Supabase session's JWT (`supabase.auth.getSession()`).
@@ -273,7 +278,7 @@ Each function is its own deployable folder: `index.js` + its own `shared/` copy 
 
 **Still not exercised**: System settings (Step 1) write path and the IP-allowlist enforcement path. `jenex_dev` role (sandbox-only restriction) also not covered in this round.
 
-**Round 4 — Contractor Command Dashboard / login page "full page reload wipes typed data" report**: user reported that after switching away from the browser tab and back, the Contractor login page had done a real full page reload (URL bar reload, not just a React state reset) and lost whatever was typed. Reproduced the mechanism (not the report itself — confirmed via code inspection + Playwright that nothing in-app triggers a reload on its own: no `window.location`/hard-navigation calls anywhere in `command-dashboard/`, `ContractorCommandDashboard.jsx`'s sidebar screen-switching is pure CSS show/hide via `.page-N .section-N{display:block}` with all panels always mounted, so it doesn't even remount on tab change). User confirmed the reload only happens after switching away and back to the tab, which pins this on **Chrome/Edge's Memory Saver / tab-discarding**, not application code — the same behavior already documented and partially mitigated for the *staff* dashboard in §7 (`sessionStorage`-based nav-position persistence), but with **no equivalent for `ContractorLoginPage.jsx`, `StaffLoginPage.jsx`, or the Contractor Command Dashboard**. Resolved for now by adding `localhost:5173` to the browser's "always keep active" / "never put to sleep" exception list (Chrome: Settings → Performance → Memory Saver; Edge: Settings → System and performance → Efficiency mode) — no code changed. **If this comes up again for real staff/contractor users** (who won't have that browser setting configured), the fix would be extending the same `sessionStorage` nav-position pattern used in `RegistrationDashboard.jsx` to the Contractor Command Dashboard's `activePage` state — login pages themselves shouldn't persist typed passwords to storage even session-scoped, so a discarded login page will always require retyping credentials; that part is expected/acceptable, not a bug to fix.
+**Round 4 — Contractor Command Dashboard / login page "full page reload wipes typed data" report**: user reported that after switching away from the browser tab and back, the Contractor login page had done a real full page reload (URL bar reload, not just a React state reset) and lost whatever was typed. Reproduced the mechanism (not the report itself — confirmed via code inspection + Playwright that nothing in-app triggers a reload on its own: no `window.location`/hard-navigation calls anywhere in `command-dashboard/`, `ContractorCommandDashboard.jsx`'s sidebar screen-switching is pure CSS show/hide via `.page-N .section-N{display:block}` with all panels always mounted, so it doesn't even remount on tab change). User confirmed the reload only happens after switching away and back to the tab, which pins this on **Chrome/Edge's Memory Saver / tab-discarding**, not application code — the same behavior already documented and partially mitigated for the *staff* dashboard in §7 (`sessionStorage`-based nav-position persistence), but with **no equivalent for `ContractorLoginPage.jsx`, `StaffLoginPage.jsx`, or the Contractor Command Dashboard**. (Those two login components were later unified into a single `src/shared/LoginPage.jsx`, §32 — this gap is unchanged by that merge, since neither the old nor the new login page persists typed input to storage.) Resolved for now by adding `localhost:5173` to the browser's "always keep active" / "never put to sleep" exception list (Chrome: Settings → Performance → Memory Saver; Edge: Settings → System and performance → Efficiency mode) — no code changed. **If this comes up again for real staff/contractor users** (who won't have that browser setting configured), the fix would be extending the same `sessionStorage` nav-position pattern used in `RegistrationDashboard.jsx` to the Contractor Command Dashboard's `activePage` state — login pages themselves shouldn't persist typed passwords to storage even session-scoped, so a discarded login page will always require retyping credentials; that part is expected/acceptable, not a bug to fix.
 
 **Playwright**: formalized as a real `devDependency` (`^1.62.0`, in both `package.json` and `package-lock.json`) so future sessions/developers can reliably re-run browser-driven tests. The actual Chromium binary lives outside the repo (`~/AppData/Local/ms-playwright` on this machine) and isn't tracked by git — a fresh checkout needs `npx playwright install chromium` once before any Playwright script will run. No project skill exists yet for driving this app (the `run` skill fell back to its generic `chromium-cli`/Playwright pattern this session, adapted since `chromium-cli` itself wasn't available) — worth generating one via `/run-skill-generator` if browser-driven testing becomes routine, since the login-and-navigate boilerplate used this session (fill email/password, wait for a step-specific text marker rather than a banner class, use `div.form-group:has(label:has-text(...))` to target inputs by their label) would otherwise need re-deriving each time.
 
@@ -1214,4 +1219,26 @@ Confirmed via a full grep of the frontend that **no live/real-time precedent exi
 
 ### Files
 `backend/functions/list-live-feed/` (new Lambda, deployed); `backend/functions/package-lambda.ps1` (`ValidateSet` updated); `src/command-dashboard/ContractorCommandDashboard.jsx` (Panel 6 rewritten; `LiveFeedJobCard` added; `liveFeed`/`liveFeedLoading`/`liveFeedError` state + `loadLiveFeed` + the polling `useEffect` added); `src/command-dashboard/dashboard.css` (`.live-feed-jobs`/`.live-feed-job`/`.live-feed-job-header`/`.live-feed-job-meta` added); `src/shared/services/api.js` (`getLiveFeed` added).
+
+---
+
+## 32. Unified login page + role-based redirect + `/staff` default swap to Platform Overview (2026-08-22)
+
+### Why
+`app.fieldloopai.com` had two separate login entry points — `/` (`ContractorLoginPage.jsx`, checks `contractor_users`) and `/staff/login` (`StaffLoginPage.jsx`, checks `fl_users`) — and `/staff` always rendered the Registration wizard first regardless of role, even though only `admin` can see Platform Overview at all. Requested change: one shared login page, contractor credentials → Command Center, admin credentials → Platform Overview by default, other staff roles → Registration (unchanged), with a way to reach Registration from Platform Overview on demand. Planned with the user first (plan mode); a background research pass into the actual routing/auth code turned up the two-login-page split before any code was written, which reframed the ask from "fix a broken redirect" to "there was never a single redirect to fix — build the unification."
+
+### 32.1 What was built
+- **New `src/shared/LoginPage.jsx`** — one email/password form, generic FieldLoop branding (no "CONTRACTOR COMMAND CENTER" / "STAFF REGISTRATION WORKSPACE" copy, since which one a login belongs to isn't known until after auth resolves). Same `supabase.auth.signInWithPassword` mechanism as before, just one shared UI. Replaces (deleted) `command-dashboard/ContractorLoginPage.jsx` and `registration-dashboard/StaffLoginPage.jsx`.
+- **`src/App.jsx` root identity resolution**: at `/` and `/dashboard`, both `useContractorAuth()` and `useStaffAuth()` run (reused as-is, not rewritten) and whichever resolves a row wins — `contractor_users` → `ContractorCommandDashboard` renders in place (unchanged from before); `fl_users` → `<Navigate>` to `/staff/platform` (`admin`) or `/staff/registration` (everyone else); a session with no match in either table → a generic "no account found for this login" error state (replacing the two near-duplicate messages the old pages had); a session matching **both** tables (no guard against this existed before, or after — it's just now got an explicit rule) → the staff identity wins, since an internal account landing in a contractor's workspace is the worse failure mode.
+- **`/staff` is now a role dispatcher, not a page** — redirects `admin` to `/staff/platform`, everyone else to `/staff/registration` (new route, hosts `RegistrationDashboard` with the same guard `/staff` used to have). `/staff/platform` and `/staff/platform/contractors/:id` are unchanged, still admin-gated exactly as before. `/staff/login` is now just `<Navigate to="/" replace />` (kept as a stub so old bookmarks don't dead-end). Every route guard's unauthenticated-redirect target changed from `/staff/login` to `/`, since there's only one login page now.
+- **`PlatformAdminDashboard.jsx`**'s existing "Registration Dashboard" header link (originally pointed at `/staff`) repointed to `/staff/registration` — pointing it at `/staff` would have bounced an admin straight back to Platform Overview via the new dispatcher.
+- Also rolled into this pass (unrelated, pre-existing uncommitted change): `technicianSetupTokens.js` (master copy + its 4 per-function copies) updated from the placeholder `https://app.fieldloop.io` to the real production origin `https://app.fieldloopai.com`.
+
+### 32.2 What was tested (real browser, Playwright — not just code review)
+Drove the actual dev server with a Playwright script (no project `run` skill existed for this app; `chromium-cli` wasn't available in this environment either, so the script used the `playwright` npm package already a real `devDependency`): unified login page renders at `/` with no role-specific branding and no console errors; contractor login (`pw-contractor-1785321789808@example.com`) stays on `/` and renders the Command Center; admin login (`a@a.com`) redirects to `/staff/platform`; non-admin staff login (`test-onboarding@example.com`) redirects to `/staff/registration`; direct navigation to `/staff` while authenticated dispatches by role both ways; `/staff/login` redirects to `/` for an unauthenticated visitor; unauthenticated direct navigation to `/staff`, `/staff/registration`, and `/staff/platform` all land on `/`; the "Registration Dashboard" ↔ "Platform Overview" cross-links both work. Screenshots confirmed the rendered pages, not just the URLs.
+
+**One flaky result, recorded rather than hand-waved away**: a single contractor-login run flashed the "no account found" error state instead of the dashboard. Six immediate repeats were all clean. The async pattern in `useContractorAuth`/`useStaffAuth` (an unguarded race between the initial `getSession()` promise and the `onAuthStateChange` callback, both able to resolve out of order) is pre-existing and unmodified by this pass — this change just makes both hooks run concurrently at `/` where previously only one ran per route, which could make a latent race like this surface more often. Not chased further since it didn't reproduce; worth a look if a real user ever reports a login flash-of-error.
+
+### Files
+`src/shared/LoginPage.jsx` (new); `src/App.jsx` (root section rewrite, `/staff` dispatcher, new `/staff/registration` route, guard redirect targets); `src/registration-dashboard/PlatformAdminDashboard.jsx` (Registration Dashboard link repointed); `src/command-dashboard/ContractorLoginPage.jsx`, `src/registration-dashboard/StaffLoginPage.jsx` (deleted); `TESTING_GUIDE.md`/`TESTING_GUIDE.docx` (updated to match, same pass); `backend/functions/{shared,add-technician,complete-technician-setup,resend-technician-setup,update-technician}/shared/technicianSetupTokens.js` (domain fix, unrelated pre-existing change committed alongside).
 
