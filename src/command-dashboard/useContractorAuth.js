@@ -18,7 +18,7 @@ export function useContractorAuth() {
     }
     const { data: contractorUser, error: userError } = await supabase
       .from('contractor_users')
-      .select('contractor_id, email, role')
+      .select('id, contractor_id, email, role, is_designated_admin')
       .eq('auth_user_id', activeSession.user.id)
       .single();
     if (userError || !contractorUser) {
@@ -35,6 +35,9 @@ export function useContractorAuth() {
       user: contractorUser.email.split('@')[0],
       email: contractorUser.email,
       role: contractorUser.role,
+      contractorUserId: contractorUser.id,
+      contractorId: contractorUser.contractor_id,
+      isDesignatedAdmin: contractorUser.is_designated_admin,
     });
   }, []);
 
@@ -44,10 +47,15 @@ export function useContractorAuth() {
       loadTenant(current).finally(() => setLoading(false));
     });
 
+    // Supabase re-validates/refreshes the session on tab refocus (it
+    // listens for the browser's own visibilitychange event), firing this
+    // callback again even when nothing meaningful changed. Only the very
+    // first check should gate rendering with `loading` — flipping it back
+    // to true on every subsequent event unmounts the whole dashboard tree
+    // on every tab switch, losing scroll position and in-memory state.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
-      setLoading(true);
-      loadTenant(next).finally(() => setLoading(false));
+      loadTenant(next);
     });
 
     return () => subscription.unsubscribe();

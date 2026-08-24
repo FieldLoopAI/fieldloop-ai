@@ -57,8 +57,8 @@ const VALIDATION_ERROR_STEPS = [
   { step: 3, match: /owner\/principal|owner date of birth|owner ssn|owner personal|owner home address/i },
   { step: 4, match: /primary contact/i },
   { step: 5, match: /license|insurance|compensation|surety bond|w-9/i },
-  { step: 6, match: /primary trade|technician count/i },
-  { step: 7, match: /payout bank|stripe connect|ach platform fee/i },
+  { step: 6, match: /primary trade|technician count|service offered/i },
+  { step: 7, match: /payout bank|account type|stripe connect|ach platform fee/i },
 ];
 
 function stepForValidationError(message) {
@@ -104,11 +104,10 @@ export default function RegistrationDashboard({ staffUser }) {
   // Notifications
   const [errorBanner, setErrorBanner] = useState(null);
   const [validationErrors, setValidationErrors] = useState([]);
+  const [validationErrorsByField, setValidationErrorsByField] = useState({});
   const [successBanner, setSuccessBanner] = useState(null);
 
   // Flash indicator
-  const [flashAudit, setFlashAudit] = useState(false);
-  const flashTimeoutRef = useRef(null);
   const loadRequestIdRef = useRef(0);
 
   // Session timer (client-side idle-out UX; actual auth enforcement is the
@@ -122,6 +121,16 @@ export default function RegistrationDashboard({ staffUser }) {
   useEffect(() => {
     sessionStorage.setItem(NAV_STORAGE_KEY, JSON.stringify({ mode, activeContractorId, activeStep }));
   }, [mode, activeContractorId, activeStep]);
+
+  // Persist the unsaved contractor draft and revealed values to sessionStorage.
+  useEffect(() => {
+    if (activeContractorId && contractorData) {
+      sessionStorage.setItem(
+        `fieldloop_draft_${activeContractorId}`,
+        JSON.stringify({ contractorData, revealedValues })
+      );
+    }
+  }, [activeContractorId, contractorData, revealedValues]);
 
   // On mount, if we restored a contractor id from a prior session in this
   // tab, re-fetch it fresh from the server rather than trusting any stale
@@ -171,6 +180,22 @@ export default function RegistrationDashboard({ staffUser }) {
     return () => clearInterval(timer);
   }, []);
 
+  // Step2/Step7's <select> fields display a fallback (e.g. "LLC",
+  // "Business Checking") whenever the underlying value is missing, so a
+  // brand-new contractor's dropdown never looks unset — but that fallback
+  // was display-only and never got written into contractorData, so
+  // validateStep would flag it as missing even though the field looked
+  // filled in on screen. Backfilling the same default into the actual data
+  // as soon as it loads keeps what's shown and what's saved in sync.
+  const withFieldDefaults = (data) => {
+    if (!data) return data;
+    const contractor = data.contractor ? { ...data.contractor } : data.contractor;
+    if (contractor && !contractor.business_structure) contractor.business_structure = 'llc';
+    const financials = data.financials ? { ...data.financials } : data.financials;
+    if (financials && !financials.account_type) financials.account_type = 'business_checking';
+    return { ...data, contractor, financials };
+  };
+
   // Explicit load, no longer auto-fired on every keystroke in the ID field
   // — call with an id (from a search result) or with none to (re)load
   // whatever's currently in activeContractorId (manual paste / refresh).
@@ -183,19 +208,57 @@ export default function RegistrationDashboard({ staffUser }) {
     const targetId = contractorId || activeContractorId;
     if (!targetId) return;
     const requestId = ++loadRequestIdRef.current;
+
+    // Check if there is a local session draft first!
+    const cached = sessionStorage.getItem(`fieldloop_draft_${targetId}`);
+    if (cached) {
+      try {
+        const { contractorData: cachedData, revealedValues: cachedRevealed } = JSON.parse(cached);
+        if (cachedData) {
+          setActiveContractorId(targetId);
+          setContractorData(withFieldDefaults(cachedData));
+          setRevealedValues(cachedRevealed || {});
+          setErrorBanner(null);
+          setValidationErrors([]);
+          setValidationErrorsByField({});
+          return;
+        }
+      } catch (e) {
+        console.error("Error reading cached draft", e);
+      }
+    }
+
     try {
       setErrorBanner(null);
       setValidationErrors([]);
+      setValidationErrorsByField({});
       const data = await api.getContractor(targetId);
       if (loadRequestIdRef.current !== requestId) return; // superseded by a newer navigation
       setActiveContractorId(targetId);
-      setContractorData(data);
+      setContractorData(withFieldDefaults(data));
       setRevealedValues({});
     } catch (e) {
       if (loadRequestIdRef.current !== requestId) return;
       setErrorBanner(e.message);
       setContractorData(null);
       setRevealedValues({});
+    }
+  };
+
+  const loadContractorFromServer = async (targetId) => {
+    const requestId = ++loadRequestIdRef.current;
+    try {
+      setErrorBanner(null);
+      const data = await api.getContractor(targetId);
+      if (loadRequestIdRef.current !== requestId) return;
+      setActiveContractorId(targetId);
+      setContractorData(withFieldDefaults(data));
+      // Remove cache since the server is now successfully updated with this data
+      sessionStorage.removeItem(`fieldloop_draft_${targetId}`);
+    } catch (e) {
+      if (loadRequestIdRef.current !== requestId) return;
+      setErrorBanner(e.message);
+      setContractorData(null);
     }
   };
 
@@ -238,14 +301,8 @@ export default function RegistrationDashboard({ staffUser }) {
 
   const handleStepSelect = (step) => {
     setActiveStep(step);
-    setRevealedValues({});
     setValidationErrors([]);
-  };
-
-  const triggerAuditLoggedIndicator = () => {
-    setFlashAudit(true);
-    if (flashTimeoutRef.current) clearTimeout(flashTimeoutRef.current);
-    flashTimeoutRef.current = setTimeout(() => setFlashAudit(false), 2500);
+    setValidationErrorsByField({});
   };
 
   // revealedValues is keyed by the stable *column name* (e.g. 'dob_ref'),
@@ -274,10 +331,18 @@ export default function RegistrationDashboard({ staffUser }) {
       setErrorBanner(null);
       const decValue = await api.revealField(activeContractorId, tableName, columnName, refKey);
       setRevealedValues(prev => ({ ...prev, [columnName]: decValue }));
-      triggerAuditLoggedIndicator();
     } catch (e) {
       setErrorBanner(e.message);
     }
+  };
+
+  // Setter for editing an already-revealed/editable masked value (EIN in
+  // Step2, DOB/SSN/home address in Step3, routing/account/Stripe/card in
+  // Step7) — replaces the object rather than mutating it in place, so the
+  // sessionStorage draft-persist effect below (which depends on
+  // revealedValues by reference) actually detects the change and saves it.
+  const handleRevealedValueChange = (columnName, val) => {
+    setRevealedValues(prev => ({ ...prev, [columnName]: val }));
   };
 
   const handleLocalChange = (section, updatedSectionData) => {
@@ -285,6 +350,9 @@ export default function RegistrationDashboard({ staffUser }) {
       ...prev,
       [section]: updatedSectionData
     }));
+    // Clear validation errors when user changes input
+    setValidationErrorsByField({});
+    setValidationErrors([]);
   };
 
   // Only Step 7 ever touches financials data — calling saveContractorFinancials
@@ -300,17 +368,270 @@ export default function RegistrationDashboard({ staffUser }) {
     await Promise.all(calls);
   };
 
+  const validateStep = (stepNum) => {
+    const errors = {};
+    if (!contractorData) return errors;
+
+    const c = contractorData.contractor || {};
+    const p = contractorData.principal || {};
+    const contacts = contractorData.contacts || [];
+    const comp = contractorData.compliance || {};
+    const ops = contractorData.operations || {};
+    const financials = contractorData.financials || {};
+    const m = contractorData.meta || {};
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const phoneRegex = /^\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})$/;
+
+    if (stepNum === 2) {
+      if (!c.legal_name?.trim()) errors.legal_name = "Legal Business Name is required.";
+      if (!c.business_structure) errors.business_structure = "Business Structure selection is required.";
+      
+      const einVal = revealedValues['ein_ref'] ?? c.ein_val;
+      if (!einVal?.trim() && !c.ein_ref) {
+        errors.ein_val = "Business Tax EIN is required.";
+      } else if (einVal && !/^\d{2}-?\d{7}$/.test(einVal.trim())) {
+        errors.ein_val = "EIN must be a 9-digit number in the format XX-XXXXXXX or XXXXXXXXX.";
+      }
+
+      if (!c.business_phone?.trim()) {
+        errors.business_phone = "Business Phone Number is required.";
+      } else if (!phoneRegex.test(c.business_phone.trim())) {
+        errors.business_phone = "Please enter a valid 10-digit phone number.";
+      }
+
+      if (c.business_sms?.trim() && !phoneRegex.test(c.business_sms.trim())) {
+        errors.business_sms = "Please enter a valid 10-digit SMS number.";
+      }
+
+      if (!c.business_email?.trim()) {
+        errors.business_email = "Business Email Address is required.";
+      } else if (!emailRegex.test(c.business_email.trim())) {
+        errors.business_email = "Please enter a valid email address.";
+      }
+
+      if (c.website?.trim() && !/^(https?:\/\/)?([\da-z.-]+)\.([a-z.]{2,6})([\/\w .-]*)*\/?$/.test(c.website.trim())) {
+        errors.website = "Please enter a valid URL (e.g. https://company.com).";
+      }
+
+      if (!c.physical_street?.trim()) errors.physical_street = "Physical Street Address is required.";
+      if (!c.physical_city?.trim()) errors.physical_city = "Physical City is required.";
+      if (!c.physical_state?.trim()) errors.physical_state = "Physical State is required.";
+      if (!c.physical_zip?.trim()) {
+        errors.physical_zip = "Physical ZIP Code is required.";
+      } else if (!/^\d{5}(-\d{4})?$/.test(c.physical_zip.trim())) {
+        errors.physical_zip = "ZIP code must be 5 digits (e.g., 12345) or ZIP+4 (e.g., 12345-6789).";
+      }
+
+      if (c.mailing_street?.trim()) {
+        if (!c.mailing_city?.trim()) errors.mailing_city = "Mailing City is required.";
+        if (!c.mailing_state?.trim()) errors.mailing_state = "Mailing State is required.";
+        if (!c.mailing_zip?.trim()) {
+          errors.mailing_zip = "Mailing ZIP Code is required.";
+        } else if (!/^\d{5}(-\d{4})?$/.test(c.mailing_zip.trim())) {
+          errors.mailing_zip = "ZIP code must be 5 digits or ZIP+4.";
+        }
+      }
+    }
+
+    if (stepNum === 3) {
+      if (!p.full_name?.trim()) errors.full_name = "Owner/Principal name is required.";
+      if (!p.title?.trim()) errors.title = "Owner/Principal job title is required.";
+      
+      if (p.ownership_pct !== undefined && p.ownership_pct !== null && p.ownership_pct !== '') {
+        const pct = parseFloat(p.ownership_pct);
+        if (isNaN(pct) || pct < 0 || pct > 100) {
+          errors.ownership_pct = "Ownership % must be a number between 0 and 100.";
+        }
+      }
+
+      const dobVal = revealedValues['dob_ref'] ?? p.dob_val;
+      if (!dobVal && !p.dob_ref) {
+        errors.dob_val = "Owner Date of Birth is required for Stripe KYC.";
+      } else if (dobVal) {
+        const dobDate = new Date(dobVal);
+        if (isNaN(dobDate.getTime())) {
+          errors.dob_val = "Please enter a valid Date of Birth.";
+        } else {
+          const today = new Date();
+          let age = today.getFullYear() - dobDate.getFullYear();
+          const m = today.getMonth() - dobDate.getMonth();
+          if (m < 0 || (m === 0 && today.getDate() < dobDate.getDate())) {
+            age--;
+          }
+          if (age < 18) {
+            errors.dob_val = "Principal must be at least 18 years old.";
+          }
+        }
+      }
+
+      const ssnVal = revealedValues['ssn_last4_ref'] ?? p.ssn_last4_val;
+      if (!ssnVal && !p.ssn_last4_ref) {
+        errors.ssn_last4_val = "Owner SSN Last 4 digits is required for Stripe KYC.";
+      } else if (ssnVal && !/^\d{4}$/.test(ssnVal.trim())) {
+        errors.ssn_last4_val = "SSN Last 4 must be exactly 4 digits.";
+      }
+
+      if (!p.personal_mobile?.trim()) {
+        errors.personal_mobile = "Owner Personal Mobile Number is required.";
+      } else if (!phoneRegex.test(p.personal_mobile.trim())) {
+        errors.personal_mobile = "Please enter a valid 10-digit phone number.";
+      }
+
+      if (!p.personal_email?.trim()) {
+        errors.personal_email = "Owner Personal Email Address is required.";
+      } else if (!emailRegex.test(p.personal_email.trim())) {
+        errors.personal_email = "Please enter a valid email address.";
+      }
+
+      const addressVal = revealedValues['home_address_ref'] ?? p.home_address_val;
+      if (!addressVal && !p.home_address_ref) {
+        errors.home_address_val = "Owner Home Address is required.";
+      }
+    }
+
+    if (stepNum === 4) {
+      if (!contacts.some((c) => c.contact_type === 'primary')) {
+        errors.contacts = "At least one Primary Contact must be specified.";
+      }
+      contacts.forEach((contact, idx) => {
+        if (!contact.full_name?.trim()) {
+          errors[`contact_${idx}_full_name`] = "Full name is required.";
+        }
+        if (contact.email?.trim() && !emailRegex.test(contact.email.trim())) {
+          errors[`contact_${idx}_email`] = "Please enter a valid email address.";
+        }
+        if (contact.direct_phone?.trim() && !phoneRegex.test(contact.direct_phone.trim())) {
+          errors[`contact_${idx}_direct_phone`] = "Please enter a valid 10-digit phone number.";
+        }
+        if (contact.sms_phone?.trim() && !phoneRegex.test(contact.sms_phone.trim())) {
+          errors[`contact_${idx}_sms_phone`] = "Please enter a valid 10-digit phone number.";
+        }
+      });
+    }
+
+    if (stepNum === 5) {
+      if (!comp.primary_license_number?.trim()) errors.primary_license_number = "Primary State Trade License Number is required.";
+      if (!comp.license_state?.trim()) errors.license_state = "License State is required.";
+      if (!comp.license_issuing_authority?.trim()) errors.license_issuing_authority = "License Issuing Authority is required.";
+      if (!comp.license_expiration_date) {
+        errors.license_expiration_date = "License Expiration Date is required.";
+      } else {
+        const expDate = new Date(comp.license_expiration_date);
+        if (isNaN(expDate.getTime())) {
+          errors.license_expiration_date = "Please enter a valid expiration date.";
+        } else if (expDate < new Date()) {
+          errors.license_expiration_date = "License expiration date must be in the future.";
+        }
+      }
+
+      if (!comp.gl_insurance_provider?.trim()) errors.gl_insurance_provider = "General Liability Insurance Carrier is required.";
+      if (!comp.gl_policy_number?.trim()) errors.gl_policy_number = "Policy Number is required.";
+      if (!comp.gl_expiration) {
+        errors.gl_expiration = "Expiration Date is required.";
+      } else {
+        const expDate = new Date(comp.gl_expiration);
+        if (isNaN(expDate.getTime())) {
+          errors.gl_expiration = "Please enter a valid date.";
+        } else if (expDate < new Date()) {
+          errors.gl_expiration = "GL expiration date must be in the future.";
+        }
+      }
+
+      if (!comp.wc_carrier?.trim()) errors.wc_carrier = "Workers' Compensation Carrier is required.";
+      if (!comp.wc_policy_number?.trim()) errors.wc_policy_number = "Policy Number is required.";
+      if (!comp.wc_expiration) {
+        errors.wc_expiration = "Expiration Date is required.";
+      } else {
+        const expDate = new Date(comp.wc_expiration);
+        if (isNaN(expDate.getTime())) {
+          errors.wc_expiration = "Please enter a valid date.";
+        } else if (expDate < new Date()) {
+          errors.wc_expiration = "WC expiration date must be in the future.";
+        }
+      }
+
+      if (comp.is_bonded === undefined || comp.is_bonded === null || comp.is_bonded === "") {
+        errors.is_bonded = "Surety Bond status is required.";
+      }
+
+      if (!comp.w9_on_file) {
+        errors.w9_on_file = "W-9 Tax Documentation must be marked as On File.";
+      }
+    }
+
+    if (stepNum === 6) {
+      if (!ops.primary_trade?.trim()) errors.primary_trade = "Primary Trade setting is required.";
+      if (!ops.services_offered || ops.services_offered.length === 0) {
+        errors.services_offered = "At least one Service Offered must be listed.";
+      }
+      if (!ops.technician_count || parseInt(ops.technician_count) <= 0) {
+        errors.technician_count = "Active Technician count must be greater than zero.";
+      }
+      if (ops.service_radius_miles !== undefined && ops.service_radius_miles !== null && ops.service_radius_miles !== '') {
+        const rad = parseInt(ops.service_radius_miles);
+        if (isNaN(rad) || rad <= 0) {
+          errors.service_radius_miles = "Service radius must be greater than zero.";
+        }
+      }
+    }
+
+    if (stepNum === 7) {
+      if (!financials.payout_bank_name?.trim()) errors.payout_bank_name = "Payout Bank Name is required.";
+      if (!financials.account_type) errors.account_type = "Account type selection is required.";
+
+      const routingVal = revealedValues['routing_number_ref'] ?? financials.routing_number_val;
+      if (!routingVal && !financials.routing_number_ref) {
+        errors.routing_number_val = "Payout Bank Routing number is required.";
+      } else if (routingVal && !/^\d{9}$/.test(routingVal.trim())) {
+        errors.routing_number_val = "Routing number must be exactly 9 digits.";
+      }
+
+      const accountVal = revealedValues['account_number_ref'] ?? financials.account_number_val;
+      if (!accountVal && !financials.account_number_ref) {
+        errors.account_number_val = "Payout Bank Account number is required.";
+      } else if (accountVal && !/^\d{4,17}$/.test(accountVal.trim())) {
+        errors.account_number_val = "Account number must be between 4 and 17 digits.";
+      }
+
+      const stripeVal = revealedValues['stripe_account_id_ref'] ?? financials.stripe_account_id_val;
+      if (!stripeVal && !financials.stripe_account_id_ref) {
+        errors.stripe_account_id_val = "Stripe Connect Account ID is required.";
+      } else if (stripeVal && !/^acct_[a-zA-Z0-9]+$/.test(stripeVal.trim())) {
+        errors.stripe_account_id_val = "Stripe Account ID must start with 'acct_'.";
+      }
+
+      if (!financials.ach_authorization_signed) {
+        errors.ach_authorization_signed = "Contractor must authorize ACH weekly platform fee pull.";
+      }
+    }
+
+    if (stepNum === 8) {
+      if (!m.status) errors.status = "Status is required.";
+      if (m.risk_score !== undefined && m.risk_score !== null && m.risk_score !== '') {
+        const score = parseInt(m.risk_score);
+        if (isNaN(score) || score < 0 || score > 100) {
+          errors.risk_score = "Risk score must be between 0 and 100.";
+        }
+      }
+    }
+
+    return errors;
+  };
+
   const handleSaveDraft = async () => {
     if (sessionExpired) {
       setErrorBanner("Session expired. Cannot save changes.");
       return;
     }
+    const errors = validateStep(activeStep);
+    setValidationErrorsByField(errors);
     try {
       setErrorBanner(null);
       setValidationErrors([]);
       await saveCurrentData();
+      await loadContractorFromServer(activeContractorId);
       setSuccessBanner("Draft saved successfully.");
-      triggerAuditLoggedIndicator();
       setTimeout(() => setSuccessBanner(null), 3000);
     } catch (e) {
       setErrorBanner(e.message);
@@ -323,16 +644,25 @@ export default function RegistrationDashboard({ staffUser }) {
       setErrorBanner("Session expired. Cannot save changes.");
       return;
     }
+    const errors = validateStep(activeStep);
+    if (Object.keys(errors).length > 0) {
+      setValidationErrorsByField(errors);
+      setValidationErrors(Object.values(errors));
+      setErrorBanner("Please correct the validation errors in the current step.");
+      return;
+    }
+
     try {
       setErrorBanner(null);
       setValidationErrors([]);
+      setValidationErrorsByField({});
       await saveCurrentData();
-      triggerAuditLoggedIndicator();
 
       if (activeStep < 8) {
         setSuccessBanner(`Step ${activeStep} saved successfully. Proceeding to Step ${activeStep + 1}...`);
-        setActiveStep(prev => prev + 1);
-        setRevealedValues({});
+        const nextStep = activeStep + 1;
+        setActiveStep(nextStep);
+        await loadContractorFromServer(activeContractorId);
         setTimeout(() => setSuccessBanner(null), 3000);
       } else {
         handleActivateContractor();
@@ -345,7 +675,6 @@ export default function RegistrationDashboard({ staffUser }) {
   const handleBackStep = () => {
     if (activeStep > 1) {
       setActiveStep(prev => prev - 1);
-      setRevealedValues({});
     }
   };
 
@@ -354,16 +683,25 @@ export default function RegistrationDashboard({ staffUser }) {
       setErrorBanner("Session expired. Cannot activate record.");
       return;
     }
+    const errors = validateStep(8);
+    if (Object.keys(errors).length > 0) {
+      setValidationErrorsByField(errors);
+      setValidationErrors(Object.values(errors));
+      setErrorBanner("Please correct the validation errors in the current step.");
+      return;
+    }
+
     try {
       setErrorBanner(null);
       setValidationErrors([]);
+      setValidationErrorsByField({});
 
       const res = await api.activateContractor(activeContractorId, contractorData, revealedValues);
       if (res.success) {
         setSuccessBanner(null);
         setErrorBanner(null);
-        await loadContractor();
-        triggerAuditLoggedIndicator();
+        sessionStorage.removeItem(`fieldloop_draft_${activeContractorId}`);
+        await loadContractorFromServer(activeContractorId);
         const suggestedId = contractorData.contractor?.business_email || contractorData.principal?.personal_email || '';
         setCredentialsData({ userId: suggestedId, password: '', confirmPassword: '' });
         setCredentialsSaved(false);
@@ -407,7 +745,6 @@ export default function RegistrationDashboard({ staffUser }) {
       await api.createContractorPortalUser(activeContractorId, credentialsData.userId.trim(), credentialsData.password);
       setCredentialErrors([]);
       setCredentialsSaved(true);
-      triggerAuditLoggedIndicator();
     } catch (e) {
       setCredentialErrors([e.message]);
     }
@@ -427,7 +764,6 @@ export default function RegistrationDashboard({ staffUser }) {
     try {
       setErrorBanner(null);
       const res = await api.exportContractorPdf(activeContractorId);
-      triggerAuditLoggedIndicator();
       const byteChars = atob(res.pdfBase64);
       const bytes = new Uint8Array(byteChars.length);
       for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
@@ -457,7 +793,6 @@ export default function RegistrationDashboard({ staffUser }) {
     try {
       setErrorBanner(null);
       const res = await api.terminateContractor(activeContractorId);
-      triggerAuditLoggedIndicator();
       await loadContractor();
       setSuccessBanner(
         `Contractor terminated. ${res.secretsPurged}/${res.secretsTotal} secrets purged.` +
@@ -510,7 +845,9 @@ export default function RegistrationDashboard({ staffUser }) {
             activeUser={activeUser}
             revealedValues={revealedValues}
             onReveal={handleRevealField}
+            onRevealedValueChange={handleRevealedValueChange}
             writeAllowed={writeAllowed}
+            errors={validationErrorsByField}
           />
         );
       case 3:
@@ -521,7 +858,9 @@ export default function RegistrationDashboard({ staffUser }) {
             activeUser={activeUser}
             revealedValues={revealedValues}
             onReveal={handleRevealField}
+            onRevealedValueChange={handleRevealedValueChange}
             writeAllowed={writeAllowed}
+            errors={validationErrorsByField}
           />
         );
       case 4:
@@ -531,6 +870,7 @@ export default function RegistrationDashboard({ staffUser }) {
             onChange={handleLocalChange}
             activeUser={activeUser}
             writeAllowed={writeAllowed}
+            errors={validationErrorsByField}
           />
         );
       case 5:
@@ -540,6 +880,7 @@ export default function RegistrationDashboard({ staffUser }) {
             onChange={handleLocalChange}
             activeUser={activeUser}
             writeAllowed={writeAllowed}
+            errors={validationErrorsByField}
           />
         );
       case 6:
@@ -548,6 +889,7 @@ export default function RegistrationDashboard({ staffUser }) {
             data={contractorData}
             onChange={handleLocalChange}
             writeAllowed={writeAllowed}
+            errors={validationErrorsByField}
           />
         );
       case 7:
@@ -558,7 +900,9 @@ export default function RegistrationDashboard({ staffUser }) {
             activeUser={activeUser}
             revealedValues={revealedValues}
             onReveal={handleRevealField}
+            onRevealedValueChange={handleRevealedValueChange}
             writeAllowed={writeAllowed}
+            errors={validationErrorsByField}
           />
         );
       case 8:
@@ -569,6 +913,7 @@ export default function RegistrationDashboard({ staffUser }) {
             activeUser={activeUser}
             writeAllowed={writeAllowed}
             onTerminate={handleTerminateContractor}
+            errors={validationErrorsByField}
           />
         );
       default:

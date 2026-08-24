@@ -13,6 +13,17 @@ exports.handler = async (event) => {
       mfa_required_roles, session_timeout_minutes, session_max_hours, ip_allowlist_enabled,
     } = body;
 
+    // The dashboard's own input clamps this to [8, 64], but that's
+    // client-side only — enforce the same bound here so a direct API call
+    // (or a client bug) can't silently weaken the platform-wide password
+    // policy.
+    if (
+      password_min_length !== undefined &&
+      (!Number.isInteger(password_min_length) || password_min_length < 8 || password_min_length > 64)
+    ) {
+      throw new Error('Password minimum length must be a whole number between 8 and 64.');
+    }
+
     const { data, error } = await supabase.from('system_settings').update({
       password_min_length, password_complexity, password_rotation_days,
       mfa_required_roles, session_timeout_minutes, session_max_hours, ip_allowlist_enabled,

@@ -3,6 +3,7 @@ const { requireRole } = require('./shared/auth');
 const { getSupabaseClient } = require('./shared/supabaseClient');
 const { enforceIpAllowlist } = require('./shared/ipAllowlist');
 const { saveContractorDraft } = require('./shared/contractorDraft');
+const { getSecret } = require('./shared/secrets');
 
 function requestMeta(event) {
   return {
@@ -52,16 +53,51 @@ function validate({ contractor, principal, contacts, compliance, operations, fin
   if (!compliance?.w9_on_file) issues.push('W-9 Tax Documentation must be marked as On File.');
 
   if (!operations?.primary_trade) issues.push('Primary Trade setting is required.');
+  if (!(operations?.services_offered || []).length) {
+    issues.push('At least one Service Offered must be listed.');
+  }
   if (!operations?.technician_count || operations.technician_count <= 0) {
     issues.push('Active Technician count must be greater than zero.');
   }
 
+  if (!financials?.account_type) issues.push('Account Type selection is required.');
   if (!financials?.routing_number_ref) issues.push('Payout Bank Routing number is required.');
   if (!financials?.account_number_ref) issues.push('Payout Bank Account number is required.');
   if (!financials?.stripe_account_id_ref) issues.push('Stripe Connect Account ID is required.');
   if (!financials?.ach_authorization_signed) {
     issues.push('Contractor must explicitly authorize the Weekly ACH platform fee pull for cash/check jobs.');
   }
+
+  return issues;
+}
+
+// The client (RegistrationDashboard's validateStep) checks these same
+// formats before a save, but that's advisory only — a direct API call or a
+// draft saved before validation existed can still reach here with a
+// malformed value. Re-checking the actual decrypted secret server-side
+// closes that gap for activation specifically (drafts stay permissive by
+// design, since they're meant to tolerate partial/in-progress data).
+const EIN_RE = /^\d{2}-?\d{7}$/;
+const SSN_LAST4_RE = /^\d{4}$/;
+const ROUTING_RE = /^\d{9}$/;
+const ACCOUNT_RE = /^\d{4,17}$/;
+const STRIPE_RE = /^acct_[a-zA-Z0-9]+$/;
+
+async function validateSecretFormats({ contractor, principal, financials }) {
+  const issues = [];
+  const checks = [
+    [contractor?.ein_ref, EIN_RE, 'Business Tax EIN must be a 9-digit number in the format XX-XXXXXXX or XXXXXXXXX.'],
+    [principal?.ssn_last4_ref, SSN_LAST4_RE, 'Owner SSN Last 4 must be exactly 4 digits.'],
+    [financials?.routing_number_ref, ROUTING_RE, 'Payout Bank Routing number must be exactly 9 digits.'],
+    [financials?.account_number_ref, ACCOUNT_RE, 'Payout Bank Account number must be between 4 and 17 digits.'],
+    [financials?.stripe_account_id_ref, STRIPE_RE, "Stripe Connect Account ID must start with 'acct_'."],
+  ];
+
+  await Promise.all(checks.map(async ([ref, re, message]) => {
+    if (!ref) return; // presence already covered by validate()
+    const plaintext = await getSecret(ref);
+    if (!re.test((plaintext || '').trim())) issues.push(message);
+  }));
 
   return issues;
 }
@@ -96,9 +132,11 @@ exports.handler = async (event) => {
     ]);
 
     const issues = validate({ contractor, principal, contacts, compliance, operations, financials });
-    if (issues.length > 0) {
+    const formatIssues = await validateSecretFormats({ contractor, principal, financials });
+    const allIssues = [...issues, ...formatIssues];
+    if (allIssues.length > 0) {
       return { statusCode: 200, headers: { 'Access-Control-Allow-Origin': '*' },
-        body: JSON.stringify({ success: false, errors: issues }) };
+        body: JSON.stringify({ success: false, errors: allIssues }) };
     }
 
     await supabase.from('contractor_system_meta').update({

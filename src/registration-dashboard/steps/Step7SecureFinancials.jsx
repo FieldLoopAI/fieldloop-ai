@@ -2,7 +2,7 @@
 import React from 'react';
 import { Lock, Check } from 'lucide-react';
 
-export default function Step7SecureFinancials({ data, onChange, revealedValues, onReveal, writeAllowed }) {
+export default function Step7SecureFinancials({ data, onChange, revealedValues, onReveal, onRevealedValueChange, writeAllowed, errors = {} }) {
   const f = data.financials || {};
 
   const handleFieldChange = (field, val) => {
@@ -30,11 +30,23 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
 
   const handleVaultChange = (columnName, val) => {
     if (!writeAllowed) return;
-    revealedValues[columnName] = val;
-    onChange('financials', { ...f });
+    onRevealedValueChange(columnName, val);
   };
 
-  const paymentMethods = f.payment_methods_accepted || ["Cash", "Check", "Credit card (via Stripe)", "ACH bank transfer"];
+  // Routing number is exactly 9 digits and account number is 4-17 digits —
+  // strip anything else so these can't accumulate arbitrary-length/
+  // non-numeric input as-you-type.
+  const handleRoutingChange = (val) => {
+    if (!writeAllowed) return;
+    onRevealedValueChange('routing_number_ref', val.replace(/\D/g, '').slice(0, 9));
+  };
+
+  const handleAccountChange = (val) => {
+    if (!writeAllowed) return;
+    onRevealedValueChange('account_number_ref', val.replace(/\D/g, '').slice(0, 17));
+  };
+
+  const paymentMethods = f.payment_methods_accepted || [];
 
   const handleTogglePaymentMethod = (method) => {
     if (!writeAllowed) return;
@@ -68,18 +80,19 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
             <label>BANK NAME *</label>
             <input 
               type="text" 
-              className="form-input" 
+              className={`form-input ${errors.payout_bank_name ? 'error' : ''}`} 
               value={f.payout_bank_name ?? ''} 
               onChange={(e) => handleFieldChange('payout_bank_name', e.target.value)}
               disabled={!writeAllowed}
               placeholder="e.g. Bank of America, N.A."
             />
+            {errors.payout_bank_name && <span className="field-error">{errors.payout_bank_name}</span>}
           </div>
 
           <div className="col-6 form-group">
-            <label>ACCOUNT TYPE</label>
+            <label>ACCOUNT TYPE *</label>
             <select
-              className="form-select"
+              className={`form-select ${errors.account_type ? 'error' : ''}`}
               value={f.account_type ?? 'business_checking'}
               onChange={(e) => handleFieldChange('account_type', e.target.value)}
               disabled={!writeAllowed}
@@ -87,6 +100,7 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
               <option value="business_checking">Business Checking</option>
               <option value="business_savings">Business Savings</option>
             </select>
+            {errors.account_type && <span className="field-error">{errors.account_type}</span>}
           </div>
 
           {/* Routing Masked / Unmasked Input */}
@@ -99,11 +113,13 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
                 <Lock className="lock-icon" size={16} />
                 <input
                   type="text"
-                  className="form-input"
-                  value={isRoutingEditable ? routingDisplay : "••••••••0277"}
-                  onChange={(e) => handleVaultChange('routing_number_ref', e.target.value)}
+                  className={`form-input ${errors.routing_number_val ? 'error' : ''}`}
+                  value={isRoutingEditable ? routingDisplay : "••••••••"}
+                  onChange={(e) => handleRoutingChange(e.target.value)}
                   readOnly={!isRoutingEditable}
                   disabled={!writeAllowed}
+                  inputMode="numeric"
+                  maxLength={9}
                   placeholder="Routing Number"
                 />
               </div>
@@ -117,6 +133,7 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
                 </button>
               )}
             </div>
+            {errors.routing_number_val && <span className="field-error">{errors.routing_number_val}</span>}
           </div>
 
           {/* Account Masked / Unmasked Input */}
@@ -129,11 +146,13 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
                 <Lock className="lock-icon" size={16} />
                 <input
                   type="text"
-                  className="form-input"
-                  value={isAccountEditable ? accountDisplay : "••••••••1212"}
-                  onChange={(e) => handleVaultChange('account_number_ref', e.target.value)}
+                  className={`form-input ${errors.account_number_val ? 'error' : ''}`}
+                  value={isAccountEditable ? accountDisplay : "••••••••"}
+                  onChange={(e) => handleAccountChange(e.target.value)}
                   readOnly={!isAccountEditable}
                   disabled={!writeAllowed}
+                  inputMode="numeric"
+                  maxLength={17}
                   placeholder="Account Number"
                 />
               </div>
@@ -147,6 +166,7 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
                 </button>
               )}
             </div>
+            {errors.account_number_val && <span className="field-error">{errors.account_number_val}</span>}
           </div>
 
           <div className="col-6 form-group">
@@ -186,18 +206,19 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
           {/* Stripe Account ID Masked / Unmasked Input */}
           <div className="col-6 form-group">
             <div className="form-label-row">
-              <label>STRIPE ACCOUNT ID <span className="enc-tag">ENC</span></label>
+              <label>STRIPE CONNECT Account ID * <span className="enc-tag">ENC</span></label>
             </div>
             <div className="masked-input-group">
               <div className="masked-input-wrapper">
                 <Lock className="lock-icon" size={16} />
                 <input
                   type="text"
-                  className="form-input"
-                  value={isStripeEditable ? stripeDisplay : "acct_1P••••••••"}
+                  className={`form-input ${errors.stripe_account_id_val ? 'error' : ''}`}
+                  value={isStripeEditable ? stripeDisplay : "acct_••••••••"}
                   onChange={(e) => handleVaultChange('stripe_account_id_ref', e.target.value)}
                   readOnly={!isStripeEditable}
                   disabled={!writeAllowed}
+                  maxLength={40}
                   placeholder="acct_1P..."
                 />
               </div>
@@ -211,6 +232,7 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
                 </button>
               )}
             </div>
+            {errors.stripe_account_id_val && <span className="field-error">{errors.stripe_account_id_val}</span>}
           </div>
 
           <div className="col-6 form-group">
@@ -269,9 +291,10 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
             <input 
               type="number" 
               className="form-input" 
-              value={f.monthly_floor_amount ?? 49} 
+              value={f.monthly_floor_amount ?? 49}
               onChange={(e) => handleFieldChange('monthly_floor_amount', e.target.value === '' ? '' : parseFloat(e.target.value))}
               disabled={!writeAllowed}
+              min={0}
               placeholder="49"
             />
           </div>
@@ -285,6 +308,8 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
               value={f.volume_discount_tier ?? 0.01}
               onChange={(e) => handleFieldChange('volume_discount_tier', e.target.value === '' ? '' : parseFloat(e.target.value))}
               disabled={!writeAllowed}
+              min={0}
+              max={1}
               placeholder="0.01"
             />
           </div>
@@ -293,12 +318,16 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: writeAllowed ? 'pointer' : 'default' }}>
               <input 
                 type="checkbox" 
+                className={errors.ach_authorization_signed ? 'error' : ''}
                 checked={!!f.ach_authorization_signed}
                 onChange={(e) => handleFieldChange('ach_authorization_signed', e.target.checked)}
                 disabled={!writeAllowed}
               />
-              <strong>ACH Authorization Signed for Cash & Check Fee Collections</strong>
+              <strong style={{ color: errors.ach_authorization_signed ? 'var(--badge-red-text)' : 'inherit' }}>
+                ACH Authorization Signed for Cash & Check Fee Collections *
+              </strong>
             </label>
+            {errors.ach_authorization_signed && <div className="field-error">{errors.ach_authorization_signed}</div>}
           </div>
         </div>
       </div>
@@ -321,7 +350,7 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
                 <input
                   type="text"
                   className="form-input"
-                  value={isCardEditable ? cardDisplay : "Visa •••• 4444"}
+                  value={isCardEditable ? cardDisplay : "•••• •••• •••• ••••"}
                   onChange={(e) => handleVaultChange('backup_card_ref', e.target.value)}
                   readOnly={!isCardEditable}
                   disabled={!writeAllowed}
@@ -345,7 +374,7 @@ export default function Step7SecureFinancials({ data, onChange, revealedValues, 
             <input 
               type="text" 
               className="form-input" 
-              value={f.backup_card_expiration ?? '08/2028'} 
+              value={f.backup_card_expiration ?? ''}
               onChange={(e) => handleFieldChange('backup_card_expiration', e.target.value)}
               disabled={!writeAllowed}
               placeholder="MM/YYYY"

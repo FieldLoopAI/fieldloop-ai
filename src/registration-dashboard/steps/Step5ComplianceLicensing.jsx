@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Plus, X } from 'lucide-react';
 
-export default function Step5ComplianceLicensing({ data, onChange, activeUser, writeAllowed }) {
+export default function Step5ComplianceLicensing({ data, onChange, _activeUser, writeAllowed, errors = {} }) {
   const comp = data.compliance || {};
   const [newLicenseText, setNewLicenseText] = useState('');
 
@@ -11,11 +11,7 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
     onChange('compliance', { ...comp, [field]: val });
   };
 
-  const additionalLicenses = comp.additional_licenses || [
-    { license_no: "RC-88214", type: "Roofing", state: "FL" },
-    { license_no: "PL-33921", type: "Plumbing sub-contract endorsement", state: "FL" },
-    { license_no: "CAPS-901", type: "Certified Aging-in-Place Specialist (CAPS)", state: "FL" }
-  ];
+  const additionalLicenses = comp.additional_licenses || [];
 
   const handleAddAdditionalLicense = () => {
     if (!newLicenseText.trim() || !writeAllowed) return;
@@ -54,12 +50,13 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
             <label>PRIMARY LICENSE # *</label>
             <input 
               type="text" 
-              className="form-input" 
+              className={`form-input ${errors.primary_license_number ? 'error' : ''}`} 
               value={comp.primary_license_number ?? ''} 
               onChange={(e) => handleFieldChange('primary_license_number', e.target.value)}
               disabled={!writeAllowed}
               placeholder="e.g. CGC-1526884"
             />
+            {errors.primary_license_number && <span className="field-error">{errors.primary_license_number}</span>}
           </div>
 
           <div className="col-6 form-group">
@@ -78,24 +75,26 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
             <label>ISSUING AUTHORITY *</label>
             <input 
               type="text" 
-              className="form-input" 
+              className={`form-input ${errors.license_issuing_authority ? 'error' : ''}`} 
               value={comp.license_issuing_authority ?? ''} 
               onChange={(e) => handleFieldChange('license_issuing_authority', e.target.value)}
               disabled={!writeAllowed}
               placeholder="e.g. FL Dept. of Business & Professional Regulation"
             />
+            {errors.license_issuing_authority && <span className="field-error">{errors.license_issuing_authority}</span>}
           </div>
 
           <div className="col-6 form-group">
             <label>LICENSE STATE *</label>
             <input 
               type="text" 
-              className="form-input" 
+              className={`form-input ${errors.license_state ? 'error' : ''}`} 
               value={comp.license_state ?? ''} 
               onChange={(e) => handleFieldChange('license_state', e.target.value)}
               disabled={!writeAllowed}
               placeholder="e.g. Florida"
             />
+            {errors.license_state && <span className="field-error">{errors.license_state}</span>}
           </div>
 
           <div className="col-6 form-group">
@@ -103,7 +102,7 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
             <input 
               type="date" 
               className="form-input" 
-              value={comp.license_issue_date ?? '2018-05-12'} 
+              value={comp.license_issue_date ?? ''}
               onChange={(e) => handleFieldChange('license_issue_date', e.target.value)}
               disabled={!writeAllowed}
             />
@@ -113,11 +112,12 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
             <label>EXPIRATION DATE *</label>
             <input 
               type="date" 
-              className="form-input" 
-              value={comp.license_expiration_date ?? '2026-09-04'} 
+              className={`form-input ${errors.license_expiration_date ? 'error' : ''}`} 
+              value={comp.license_expiration_date ?? ''}
               onChange={(e) => handleFieldChange('license_expiration_date', e.target.value)}
               disabled={!writeAllowed}
             />
+            {errors.license_expiration_date && <span className="field-error">{errors.license_expiration_date}</span>}
           </div>
 
           {/* Dynamic Additional Trade Licenses Tag Editor */}
@@ -175,24 +175,26 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
             <label>PROVIDER / CARRIER *</label>
             <input 
               type="text" 
-              className="form-input" 
+              className={`form-input ${errors.gl_insurance_provider ? 'error' : ''}`} 
               value={comp.gl_insurance_provider ?? ''} 
               onChange={(e) => handleFieldChange('gl_insurance_provider', e.target.value)}
               disabled={!writeAllowed}
               placeholder="Insurance Carrier Name"
             />
+            {errors.gl_insurance_provider && <span className="field-error">{errors.gl_insurance_provider}</span>}
           </div>
 
           <div className="col-6 form-group">
             <label>POLICY # *</label>
             <input 
               type="text" 
-              className="form-input" 
+              className={`form-input ${errors.gl_policy_number ? 'error' : ''}`} 
               value={comp.gl_policy_number ?? ''} 
               onChange={(e) => handleFieldChange('gl_policy_number', e.target.value)}
               disabled={!writeAllowed}
               placeholder="Policy Number"
             />
+            {errors.gl_policy_number && <span className="field-error">{errors.gl_policy_number}</span>}
           </div>
 
           <div className="col-6 form-group">
@@ -200,9 +202,10 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
             <input 
               type="number" 
               className="form-input" 
-              value={comp.gl_coverage_amount ?? 2000000} 
+              value={comp.gl_coverage_amount ?? ''}
               onChange={(e) => handleFieldChange('gl_coverage_amount', parseFloat(e.target.value) || '')}
               disabled={!writeAllowed}
+              min={0}
               placeholder="2000000"
             />
           </div>
@@ -212,9 +215,10 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
             <input 
               type="number" 
               className="form-input" 
-              value={comp.gl_aggregate_amount ?? 4000000} 
+              value={comp.gl_aggregate_amount ?? ''}
               onChange={(e) => handleFieldChange('gl_aggregate_amount', parseFloat(e.target.value) || '')}
               disabled={!writeAllowed}
+              min={0}
               placeholder="4000000"
             />
           </div>
@@ -223,11 +227,12 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
             <label>EXPIRATION DATE *</label>
             <input
               type="date"
-              className="form-input"
-              value={comp.gl_expiration ?? '2027-01-15'}
+              className={`form-input ${errors.gl_expiration ? 'error' : ''}`}
+              value={comp.gl_expiration ?? ''}
               onChange={(e) => handleFieldChange('gl_expiration', e.target.value)}
               disabled={!writeAllowed}
             />
+            {errors.gl_expiration && <span className="field-error">{errors.gl_expiration}</span>}
           </div>
 
           <div className="col-6 form-group">
@@ -256,48 +261,53 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
             <label>WORKERS' COMP CARRIER *</label>
             <input 
               type="text" 
-              className="form-input" 
+              className={`form-input ${errors.wc_carrier ? 'error' : ''}`} 
               value={comp.wc_carrier ?? ''} 
               onChange={(e) => handleFieldChange('wc_carrier', e.target.value)}
               disabled={!writeAllowed}
               placeholder="Carrier Name"
             />
+            {errors.wc_carrier && <span className="field-error">{errors.wc_carrier}</span>}
           </div>
 
           <div className="col-6 form-group">
             <label>WC POLICY # *</label>
             <input 
               type="text" 
-              className="form-input" 
+              className={`form-input ${errors.wc_policy_number ? 'error' : ''}`} 
               value={comp.wc_policy_number ?? ''} 
               onChange={(e) => handleFieldChange('wc_policy_number', e.target.value)}
               disabled={!writeAllowed}
               placeholder="Policy #"
             />
+            {errors.wc_policy_number && <span className="field-error">{errors.wc_policy_number}</span>}
           </div>
 
           <div className="col-6 form-group">
             <label>WC EXPIRATION DATE *</label>
             <input 
               type="date" 
-              className="form-input" 
-              value={comp.wc_expiration ?? '2027-03-31'} 
+              className={`form-input ${errors.wc_expiration ? 'error' : ''}`} 
+              value={comp.wc_expiration ?? ''}
               onChange={(e) => handleFieldChange('wc_expiration', e.target.value)}
               disabled={!writeAllowed}
             />
+            {errors.wc_expiration && <span className="field-error">{errors.wc_expiration}</span>}
           </div>
 
           <div className="col-6 form-group">
             <label>BONDED STATUS *</label>
-            <select 
-              className="form-select"
-              value={comp.is_bonded ? 'yes' : 'no'}
-              onChange={(e) => handleFieldChange('is_bonded', e.target.value === 'yes')}
+            <select
+              className={`form-select ${errors.is_bonded ? 'error' : ''}`}
+              value={comp.is_bonded === undefined || comp.is_bonded === null || comp.is_bonded === '' ? '' : (comp.is_bonded ? 'yes' : 'no')}
+              onChange={(e) => handleFieldChange('is_bonded', e.target.value === '' ? null : e.target.value === 'yes')}
               disabled={!writeAllowed}
             >
+              <option value="" disabled>Select bond status…</option>
               <option value="yes">Yes (Surety Bonded)</option>
               <option value="no">No Bond Required</option>
             </select>
+            {errors.is_bonded && <span className="field-error">{errors.is_bonded}</span>}
           </div>
 
           <div className="col-6 form-group">
@@ -329,9 +339,10 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
             <input 
               type="number" 
               className="form-input" 
-              value={comp.bond_amount ?? 25000} 
+              value={comp.bond_amount ?? ''}
               onChange={(e) => handleFieldChange('bond_amount', parseFloat(e.target.value) || '')}
               disabled={!writeAllowed}
+              min={0}
               placeholder="25000"
             />
           </div>
@@ -341,7 +352,7 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
             <input 
               type="date" 
               className="form-input" 
-              value={comp.bond_expiration ?? '2027-06-30'} 
+              value={comp.bond_expiration ?? ''}
               onChange={(e) => handleFieldChange('bond_expiration', e.target.value)}
               disabled={!writeAllowed}
             />
@@ -359,7 +370,7 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
           <div className="col-6 form-group">
             <label>W-9 ON FILE STATUS *</label>
             <select 
-              className="form-select"
+              className={`form-select ${errors.w9_on_file ? 'error' : ''}`}
               value={comp.w9_on_file ? 'signed' : 'pending'}
               onChange={(e) => handleFieldChange('w9_on_file', e.target.value === 'signed')}
               disabled={!writeAllowed}
@@ -367,6 +378,7 @@ export default function Step5ComplianceLicensing({ data, onChange, activeUser, w
               <option value="signed">✓ W-9 Signed & On File</option>
               <option value="pending">Pending W-9 Form Signature</option>
             </select>
+            {errors.w9_on_file && <span className="field-error">{errors.w9_on_file}</span>}
           </div>
 
           <div className="col-6 form-group">

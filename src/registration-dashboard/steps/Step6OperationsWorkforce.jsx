@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { Plus, X } from 'lucide-react';
 
-export default function Step6OperationsWorkforce({ data, onChange, writeAllowed }) {
+export default function Step6OperationsWorkforce({ data, onChange, writeAllowed, errors = {} }) {
   const ops = data.operations || {};
   const [newServiceText, setNewServiceText] = useState('');
 
@@ -11,11 +11,7 @@ export default function Step6OperationsWorkforce({ data, onChange, writeAllowed 
     onChange('operations', { ...ops, [field]: val });
   };
 
-  const services = ops.services_offered || [
-    "Tile work", "Bathroom remodeling", "Kitchen remodeling", 
-    "Wood flooring", "Tile flooring", "Interior painting", 
-    "Exterior painting", "Room additions", "New construction"
-  ];
+  const services = ops.services_offered || [];
 
   const handleAddService = () => {
     if (!newServiceText.trim() || !writeAllowed) return;
@@ -45,12 +41,13 @@ export default function Step6OperationsWorkforce({ data, onChange, writeAllowed 
           <label>PRIMARY TRADE *</label>
           <input 
             type="text" 
-            className="form-input" 
+            className={`form-input ${errors.primary_trade ? 'error' : ''}`} 
             value={ops.primary_trade ?? ''} 
             onChange={(e) => handleFieldChange('primary_trade', e.target.value)}
             disabled={!writeAllowed}
             placeholder="Primary Trade"
           />
+          {errors.primary_trade && <span className="field-error">{errors.primary_trade}</span>}
         </div>
 
         {/* Dynamic Services Offered Tag Editor */}
@@ -93,6 +90,7 @@ export default function Step6OperationsWorkforce({ data, onChange, writeAllowed 
               </button>
             </div>
           )}
+          {errors.services_offered && <span className="field-error">{errors.services_offered}</span>}
         </div>
       </div>
 
@@ -107,12 +105,14 @@ export default function Step6OperationsWorkforce({ data, onChange, writeAllowed 
             <label>SERVICE RADIUS (MILES)</label>
             <input
               type="number"
-              className="form-input"
+              className={`form-input ${errors.service_radius_miles ? 'error' : ''}`}
               value={ops.service_radius_miles ?? ''}
               onChange={(e) => handleFieldChange('service_radius_miles', e.target.value === '' ? '' : parseInt(e.target.value))}
               disabled={!writeAllowed}
+              min={1}
               placeholder="45"
             />
+            {errors.service_radius_miles && <span className="field-error">{errors.service_radius_miles}</span>}
           </div>
 
           <div className="col-6 form-group">
@@ -189,12 +189,14 @@ export default function Step6OperationsWorkforce({ data, onChange, writeAllowed 
             <label>ACTIVE TECHNICIAN COUNT *</label>
             <input 
               type="number" 
-              className="form-input" 
-              value={ops.technician_count ?? ''} 
+              className={`form-input ${errors.technician_count ? 'error' : ''}`} 
+              value={ops.technician_count ?? ''}
               onChange={(e) => handleFieldChange('technician_count', e.target.value === '' ? '' : parseInt(e.target.value))}
               disabled={!writeAllowed}
+              min={1}
               placeholder="9"
             />
+            {errors.technician_count && <span className="field-error">{errors.technician_count}</span>}
           </div>
 
           <div className="col-6 form-group">
@@ -202,9 +204,10 @@ export default function Step6OperationsWorkforce({ data, onChange, writeAllowed 
             <input 
               type="number" 
               className="form-input" 
-              value={ops.vehicle_count ?? ''} 
+              value={ops.vehicle_count ?? ''}
               onChange={(e) => handleFieldChange('vehicle_count', e.target.value === '' ? '' : parseInt(e.target.value))}
               disabled={!writeAllowed}
+              min={0}
               placeholder="3"
             />
           </div>

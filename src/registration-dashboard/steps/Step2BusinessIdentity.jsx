@@ -2,7 +2,7 @@
 import React from 'react';
 import { Lock } from 'lucide-react';
 
-export default function Step2BusinessIdentity({ data, onChange, activeUser, revealedValues, onReveal, writeAllowed }) {
+export default function Step2BusinessIdentity({ data, onChange, _activeUser, revealedValues, onReveal, onRevealedValueChange, writeAllowed, errors = {} }) {
   const c = data.contractor || {};
 
   const handleFieldChange = (field, val) => {
@@ -17,12 +17,15 @@ export default function Step2BusinessIdentity({ data, onChange, activeUser, reve
   const einEditable = !hasEinRef || isEinRevealed;
   const einDisplayValue = einEditable
     ? (revealedValues['ein_ref'] ?? '')
-    : "XX-XXX7842";
+    : "XX-XXXXXXX";
 
+  // EIN format is XX-XXXXXXX or 9 bare digits — strip anything else so the
+  // field can't accumulate arbitrary-length/non-numeric input as-you-type.
   const handleEinChange = (val) => {
     if (!writeAllowed) return;
-    revealedValues['ein_ref'] = val;
-    handleFieldChange('ein_val', val);
+    const cleaned = val.replace(/[^\d-]/g, '').slice(0, 10);
+    onRevealedValueChange('ein_ref', cleaned);
+    handleFieldChange('ein_val', cleaned);
   };
 
   return (
@@ -40,30 +43,32 @@ export default function Step2BusinessIdentity({ data, onChange, activeUser, reve
           <label>LEGAL BUSINESS NAME *</label>
           <input 
             type="text" 
-            className="form-input"
+            className={`form-input ${errors.legal_name ? 'error' : ''}`}
             value={c.legal_name ?? ''}
             onChange={(e) => handleFieldChange('legal_name', e.target.value)}
             disabled={!writeAllowed}
             placeholder="Legal Name"
           />
+          {errors.legal_name && <span className="field-error">{errors.legal_name}</span>}
         </div>
 
         <div className="col-6 form-group">
           <label>DBA / TRADE NAME</label>
           <input 
             type="text" 
-            className="form-input"
+            className={`form-input ${errors.dba_name ? 'error' : ''}`}
             value={c.dba_name ?? ''}
             onChange={(e) => handleFieldChange('dba_name', e.target.value)}
             disabled={!writeAllowed}
             placeholder="Trade Name / DBA"
           />
+          {errors.dba_name && <span className="field-error">{errors.dba_name}</span>}
         </div>
 
         <div className="col-6 form-group">
           <label>BUSINESS STRUCTURE *</label>
           <select 
-            className="form-select"
+            className={`form-select ${errors.business_structure ? 'error' : ''}`}
             value={c.business_structure ?? 'llc'}
             onChange={(e) => handleFieldChange('business_structure', e.target.value)}
             disabled={!writeAllowed}
@@ -74,6 +79,7 @@ export default function Step2BusinessIdentity({ data, onChange, activeUser, reve
             <option value="sole_prop">Sole Proprietorship</option>
             <option value="partnership">Partnership</option>
           </select>
+          {errors.business_structure && <span className="field-error">{errors.business_structure}</span>}
         </div>
 
         {/* EIN / TAX ID Input with Reveal & Edit */}
@@ -86,11 +92,12 @@ export default function Step2BusinessIdentity({ data, onChange, activeUser, reve
               <Lock className="lock-icon" size={16} />
               <input
                 type="text"
-                className="form-input"
+                className={`form-input ${errors.ein_val ? 'error' : ''}`}
                 value={einDisplayValue}
                 onChange={(e) => handleEinChange(e.target.value)}
                 readOnly={!einEditable}
                 disabled={!writeAllowed}
+                maxLength={10}
                 placeholder="12-3456789"
               />
             </div>
@@ -104,66 +111,78 @@ export default function Step2BusinessIdentity({ data, onChange, activeUser, reve
               </button>
             )}
           </div>
+          {errors.ein_val && <span className="field-error">{errors.ein_val}</span>}
         </div>
 
         <div className="col-6 form-group">
           <label>YEAR ESTABLISHED</label>
           <input 
             type="number" 
-            className="form-input"
+            className={`form-input ${errors.year_established ? 'error' : ''}`}
             value={c.year_established ?? ''}
             onChange={(e) => handleFieldChange('year_established', e.target.value === '' ? '' : parseInt(e.target.value))}
             disabled={!writeAllowed}
+            min={1900}
+            max={new Date().getFullYear()}
             placeholder="e.g. 2018"
           />
+          {errors.year_established && <span className="field-error">{errors.year_established}</span>}
         </div>
 
         <div className="col-6 form-group">
           <label>BUSINESS PHONE (VOICE) *</label>
           <input 
             type="text" 
-            className="form-input"
+            className={`form-input ${errors.business_phone ? 'error' : ''}`}
             value={c.business_phone ?? ''}
             onChange={(e) => handleFieldChange('business_phone', e.target.value)}
             disabled={!writeAllowed}
+            inputMode="tel"
+            maxLength={20}
             placeholder="(555) 000-0000"
           />
+          {errors.business_phone && <span className="field-error">{errors.business_phone}</span>}
         </div>
 
         <div className="col-6 form-group">
           <label>TEXT / SMS NUMBER</label>
           <input 
             type="text" 
-            className="form-input"
+            className={`form-input ${errors.business_sms ? 'error' : ''}`}
             value={c.business_sms ?? ''}
             onChange={(e) => handleFieldChange('business_sms', e.target.value)}
             disabled={!writeAllowed}
+            inputMode="tel"
+            maxLength={20}
             placeholder="(555) 000-0000"
           />
+          {errors.business_sms && <span className="field-error">{errors.business_sms}</span>}
         </div>
 
         <div className="col-12 form-group">
           <label>BUSINESS EMAIL *</label>
           <input 
             type="email" 
-            className="form-input"
+            className={`form-input ${errors.business_email ? 'error' : ''}`}
             value={c.business_email ?? ''}
             onChange={(e) => handleFieldChange('business_email', e.target.value)}
             disabled={!writeAllowed}
             placeholder="onboarding@company.com"
           />
+          {errors.business_email && <span className="field-error">{errors.business_email}</span>}
         </div>
 
         <div className="col-12 form-group">
           <label>WEBSITE</label>
           <input 
             type="url" 
-            className="form-input"
+            className={`form-input ${errors.website ? 'error' : ''}`}
             value={c.website ?? ''}
             onChange={(e) => handleFieldChange('website', e.target.value)}
             disabled={!writeAllowed}
             placeholder="https://company.com"
           />
+          {errors.website && <span className="field-error">{errors.website}</span>}
         </div>
 
       </div>
@@ -179,84 +198,121 @@ export default function Step2BusinessIdentity({ data, onChange, activeUser, reve
             <label>PHYSICAL STREET ADDRESS *</label>
             <input 
               type="text" 
-              className="form-input"
+              className={`form-input ${errors.physical_street ? 'error' : ''}`}
               value={c.physical_street ?? ''}
               onChange={(e) => handleFieldChange('physical_street', e.target.value)}
               disabled={!writeAllowed}
               placeholder="Street Address"
             />
+            {errors.physical_street && <span className="field-error">{errors.physical_street}</span>}
           </div>
 
           <div className="col-6 form-group">
             <label>MAILING ADDRESS (IF DIFFERENT)</label>
             <input 
               type="text" 
-              className="form-input"
+              className={`form-input ${errors.mailing_street ? 'error' : ''}`}
               value={c.mailing_street ?? ''}
               onChange={(e) => handleFieldChange('mailing_street', e.target.value)}
               disabled={!writeAllowed}
               placeholder="P.O. Box or Mailing Address"
             />
+            {errors.mailing_street && <span className="field-error">{errors.mailing_street}</span>}
           </div>
 
           <div className="col-6 form-group">
             <label>CITY *</label>
             <input 
               type="text" 
-              className="form-input"
+              className={`form-input ${errors.physical_city ? 'error' : ''}`}
               value={c.physical_city ?? ''}
               onChange={(e) => handleFieldChange('physical_city', e.target.value)}
               disabled={!writeAllowed}
               placeholder="City"
             />
+            {errors.physical_city && <span className="field-error">{errors.physical_city}</span>}
           </div>
 
           <div className="col-6 form-group">
             <label>MAILING CITY</label>
             <input 
               type="text" 
-              className="form-input"
+              className={`form-input ${errors.mailing_city ? 'error' : ''}`}
               value={c.mailing_city ?? ''}
               onChange={(e) => handleFieldChange('mailing_city', e.target.value)}
               disabled={!writeAllowed}
               placeholder="Mailing City"
             />
+            {errors.mailing_city && <span className="field-error">{errors.mailing_city}</span>}
           </div>
 
           <div className="col-6 form-group">
             <label>STATE *</label>
             <input 
               type="text" 
-              className="form-input"
+              className={`form-input ${errors.physical_state ? 'error' : ''}`}
               value={c.physical_state ?? ''}
               onChange={(e) => handleFieldChange('physical_state', e.target.value)}
               disabled={!writeAllowed}
               placeholder="State"
             />
+            {errors.physical_state && <span className="field-error">{errors.physical_state}</span>}
+          </div>
+
+          <div className="col-6 form-group">
+            <label>MAILING STATE</label>
+            <input 
+              type="text" 
+              className={`form-input ${errors.mailing_state ? 'error' : ''}`}
+              value={c.mailing_state ?? ''}
+              onChange={(e) => handleFieldChange('mailing_state', e.target.value)}
+              disabled={!writeAllowed}
+              placeholder="Mailing State"
+            />
+            {errors.mailing_state && <span className="field-error">{errors.mailing_state}</span>}
           </div>
 
           <div className="col-6 form-group">
             <label>ZIP *</label>
             <input 
               type="text" 
-              className="form-input"
+              className={`form-input ${errors.physical_zip ? 'error' : ''}`}
               value={c.physical_zip ?? ''}
               onChange={(e) => handleFieldChange('physical_zip', e.target.value)}
               disabled={!writeAllowed}
+              inputMode="numeric"
+              maxLength={10}
               placeholder="ZIP Code"
             />
+            {errors.physical_zip && <span className="field-error">{errors.physical_zip}</span>}
+          </div>
+
+          <div className="col-6 form-group">
+            <label>MAILING ZIP</label>
+            <input 
+              type="text" 
+              className={`form-input ${errors.mailing_zip ? 'error' : ''}`}
+              value={c.mailing_zip ?? ''}
+              onChange={(e) => handleFieldChange('mailing_zip', e.target.value)}
+              disabled={!writeAllowed}
+              inputMode="numeric"
+              maxLength={10}
+              placeholder="Mailing ZIP Code"
+            />
+            {errors.mailing_zip && <span className="field-error">{errors.mailing_zip}</span>}
           </div>
 
           <div className="col-6 form-group">
             <label>COUNTY</label>
             <input 
               type="text" 
-              className="form-input"
+              className={`form-input ${errors.physical_county ? 'error' : ''}`}
               value={c.physical_county ?? ''}
               onChange={(e) => handleFieldChange('physical_county', e.target.value)}
               disabled={!writeAllowed}
               placeholder="County"
             />
+            {errors.physical_county && <span className="field-error">{errors.physical_county}</span>}
           </div>
         </div>
       </div>

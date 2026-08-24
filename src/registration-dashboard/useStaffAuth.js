@@ -28,10 +28,15 @@ export function useStaffAuth() {
       loadFlUser(current).finally(() => setLoading(false));
     });
 
+    // Supabase re-validates/refreshes the session on tab refocus (it
+    // listens for the browser's own visibilitychange event), firing this
+    // callback again even when nothing meaningful changed. Only the very
+    // first check should gate rendering with `loading` — flipping it back
+    // to true on every subsequent event unmounts the whole staff dashboard
+    // tree on every tab switch, losing scroll position and in-memory state.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, next) => {
       setSession(next);
-      setLoading(true);
-      loadFlUser(next).finally(() => setLoading(false));
+      loadFlUser(next);
     });
 
     return () => subscription.unsubscribe();

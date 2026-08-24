@@ -1,5 +1,8 @@
 // src/components/steps/Step1AccessSecurity.jsx
-import React from 'react';
+import React, { useState } from 'react';
+
+const PASSWORD_MIN_LENGTH_FLOOR = 8;
+const PASSWORD_MIN_LENGTH_CEILING = 64;
 
 export default function Step1AccessSecurity({ data, activeUser, auditLog, settings, onSettingsChange }) {
   const isAdmin = activeUser.role === 'admin';
@@ -12,6 +15,30 @@ export default function Step1AccessSecurity({ data, activeUser, auditLog, settin
   const handlePolicyChange = (key, value) => {
     if (!isAdmin || !settings) return;
     onSettingsChange({ ...settings, [key]: value });
+  };
+
+  // Every other policy field here is a <select> (a single discrete choice,
+  // safe to save immediately). This one is free-typed, so saving on every
+  // keystroke would fire a live, unvalidated write to system_settings for
+  // each digit typed — clamp and commit on blur instead, once the admin is
+  // done typing a real value.
+  const [pendingPasswordMinLength, setPendingPasswordMinLength] = useState(null);
+
+  const commitPasswordMinLength = () => {
+    if (pendingPasswordMinLength === null) return;
+    const parsed = parseInt(pendingPasswordMinLength, 10);
+    const clamped = Math.min(
+      PASSWORD_MIN_LENGTH_CEILING,
+      Math.max(PASSWORD_MIN_LENGTH_FLOOR, isNaN(parsed) ? PASSWORD_MIN_LENGTH_FLOOR : parsed)
+    );
+    // Keep showing the clamped value (rather than reverting to the stale
+    // `settings` prop) while the save round-trips — clearing this back to
+    // null immediately made the field flicker back to the old value until
+    // the response came back.
+    setPendingPasswordMinLength(String(clamped));
+    if (clamped !== settings.password_min_length) {
+      handlePolicyChange('password_min_length', clamped);
+    }
   };
 
   return (
@@ -54,8 +81,8 @@ export default function Step1AccessSecurity({ data, activeUser, auditLog, settin
               <tr>
                 <td style={{ fontWeight: 700 }}>Onboarding Specialist</td>
                 <td>✓ Full</td>
-                <td>◐ Last 4 only</td>
-                <td>◐ Last 4 only</td>
+                <td>✓ Full (Revealable)</td>
+                <td>✓ Full (Revealable)</td>
                 <td>✕ No</td>
                 <td><span className="badge-write">WRITE</span></td>
               </tr>
@@ -63,7 +90,7 @@ export default function Step1AccessSecurity({ data, activeUser, auditLog, settin
                 <td style={{ fontWeight: 700 }}>Finance / Reconciliation</td>
                 <td>✓ Full</td>
                 <td>✕ No</td>
-                <td>◐ Last 4 only</td>
+                <td>✓ Full (Revealable)</td>
                 <td>✕ No</td>
                 <td style={{ color: 'var(--text-muted)' }}>Read-only</td>
               </tr>
@@ -103,9 +130,12 @@ export default function Step1AccessSecurity({ data, activeUser, auditLog, settin
               <input
                 type="number"
                 className="form-input"
-                value={settings.password_min_length}
-                onChange={(e) => handlePolicyChange('password_min_length', parseInt(e.target.value) || 14)}
+                value={pendingPasswordMinLength ?? settings.password_min_length}
+                onChange={(e) => setPendingPasswordMinLength(e.target.value)}
+                onBlur={commitPasswordMinLength}
                 disabled={!isAdmin}
+                min={PASSWORD_MIN_LENGTH_FLOOR}
+                max={PASSWORD_MIN_LENGTH_CEILING}
               />
             </div>
 

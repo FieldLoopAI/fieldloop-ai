@@ -2,7 +2,7 @@
 import React from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 
-export default function Step4KeyContacts({ data, onChange, activeUser, writeAllowed }) {
+export default function Step4KeyContacts({ data, onChange, _activeUser, writeAllowed, errors = {} }) {
   const contacts = data.contacts || [];
 
   const getAvatarInitials = (name) => {
@@ -23,7 +23,7 @@ export default function Step4KeyContacts({ data, onChange, activeUser, writeAllo
     if (!writeAllowed) return;
     const newContact = {
       id: `cont-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-      contractor_id: data.contractor?.id || 'contr-luxe-001',
+      contractor_id: data.contractor?.id,
       contact_type: "secondary",
       full_name: "",
       title: "New Team Contact",
@@ -86,6 +86,12 @@ export default function Step4KeyContacts({ data, onChange, activeUser, writeAllo
         </div>
       </div>
 
+      {errors.contacts && (
+        <div className="spec-callout pink" style={{ margin: '0 0 1rem 0' }}>
+          <p>{errors.contacts}</p>
+        </div>
+      )}
+
       <div className="contacts-grid">
         {contacts.map((c, i) => (
           <div className="contact-card" key={c.id || i}>
@@ -120,12 +126,13 @@ export default function Step4KeyContacts({ data, onChange, activeUser, writeAllo
                 <label>FULL NAME *</label>
                 <input 
                   type="text" 
-                  className="form-input" 
+                  className={`form-input ${errors[`contact_${i}_full_name`] ? 'error' : ''}`} 
                   value={c.full_name || ''} 
                   onChange={(e) => handleContactChange(i, 'full_name', e.target.value)}
                   disabled={!writeAllowed}
                   placeholder="e.g. Jane Doe"
                 />
+                {errors[`contact_${i}_full_name`] && <span className="field-error">{errors[`contact_${i}_full_name`]}</span>}
               </div>
 
               <div className="col-6 form-group">
@@ -160,36 +167,43 @@ export default function Step4KeyContacts({ data, onChange, activeUser, writeAllo
                 <label>DIRECT LINE</label>
                 <input 
                   type="text" 
-                  className="form-input" 
-                  value={c.direct_phone || ''} 
+                  className={`form-input ${errors[`contact_${i}_direct_phone`] ? 'error' : ''}`} 
+                  value={c.direct_phone || ''}
                   onChange={(e) => handleContactChange(i, 'direct_phone', e.target.value)}
                   disabled={!writeAllowed}
+                  inputMode="tel"
+                  maxLength={20}
                   placeholder="(555) 000-0000"
                 />
+                {errors[`contact_${i}_direct_phone`] && <span className="field-error">{errors[`contact_${i}_direct_phone`]}</span>}
               </div>
 
               <div className="col-6 form-group">
                 <label>TEXT / SMS NUMBER</label>
                 <input 
                   type="text" 
-                  className="form-input" 
-                  value={c.sms_phone || ''} 
+                  className={`form-input ${errors[`contact_${i}_sms_phone`] ? 'error' : ''}`} 
+                  value={c.sms_phone || ''}
                   onChange={(e) => handleContactChange(i, 'sms_phone', e.target.value)}
                   disabled={!writeAllowed}
+                  inputMode="tel"
+                  maxLength={20}
                   placeholder="(555) 000-0000"
                 />
+                {errors[`contact_${i}_sms_phone`] && <span className="field-error">{errors[`contact_${i}_sms_phone`]}</span>}
               </div>
 
               <div className="col-6 form-group">
                 <label>EMAIL ADDRESS</label>
                 <input 
                   type="email" 
-                  className="form-input" 
+                  className={`form-input ${errors[`contact_${i}_email`] ? 'error' : ''}`} 
                   value={c.email || ''} 
                   onChange={(e) => handleContactChange(i, 'email', e.target.value)}
                   disabled={!writeAllowed}
                   placeholder="name@company.com"
                 />
+                {errors[`contact_${i}_email`] && <span className="field-error">{errors[`contact_${i}_email`]}</span>}
               </div>
 
               <div className="col-6 form-group">
