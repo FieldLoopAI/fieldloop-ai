@@ -7,6 +7,7 @@ import PlatformAdminDashboard from './registration-dashboard/PlatformAdminDashbo
 import PlatformContractorDetail from './registration-dashboard/PlatformContractorDetail';
 import { useStaffAuth } from './registration-dashboard/useStaffAuth';
 import TechnicianSetupPage from './technician-setup/TechnicianSetupPage';
+import TeamSetupPage from './team-setup/TeamSetupPage';
 
 // Where a signed-in fl_users role lands: admin gets the cross-contractor
 // Platform Overview, every other staff role gets the Registration wizard
@@ -84,6 +85,7 @@ export default function App() {
       <Route path="/staff/platform" element={<PlatformSection />} />
       <Route path="/staff/platform/contractors/:id" element={<PlatformContractorSection />} />
       <Route path="/technician-setup" element={<TechnicianSetupPage />} />
+      <Route path="/team-setup" element={<TeamSetupPage />} />
     </Routes>
   );
 }

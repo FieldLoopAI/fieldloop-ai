@@ -18,7 +18,7 @@ const VALID_OUTPUT_FORMATS = ['zip', 'csv', 'pdf'];
 
 exports.handler = async (event) => {
   try {
-    const contractorUser = await requireContractorRole(event, ['owner_admin']);
+    const contractorUser = await requireContractorRole(event, ['owner_admin', 'dispatcher', 'bookkeeper']);
     const body = JSON.parse(event.body || '{}');
     const { export_type, date_range_start, date_range_end, include_categories, output_format } = body;
 

@@ -13,7 +13,7 @@ const ACTIVE_JOB_STATUSES = ['draft', 'scheduled', 'en_route', 'on_site'];
 
 exports.handler = async (event) => {
   try {
-    const contractorUser = await requireContractorRole(event, ['owner_admin']);
+    const contractorUser = await requireContractorRole(event, ['owner_admin', 'dispatcher', 'bookkeeper', 'field_lead']);
     const supabase = await getSupabaseClient();
 
     const { data: customers, error } = await supabase

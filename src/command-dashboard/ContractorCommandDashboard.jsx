@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { Activity, Archive, CalendarDays, Check, ChevronRight, Download, FileText, Lock, LogOut, Mic, Plus, Search, Square, Truck, UserPlus } from 'lucide-react';
-import { technicians as mockTechnicians } from './dashboardData';
 import { api } from '../shared/services/api';
+import { permissionsFor } from './usePermissions';
 import './dashboard.css';
 
 const initials = name => name.split(' ').map(word => word[0]).join('').slice(0, 2);
@@ -142,9 +142,14 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
   const [auditLog, setAuditLog] = useState(null);
   const [auditLogLoading, setAuditLogLoading] = useState(false);
   const [showAuditLog, setShowAuditLog] = useState(false);
+  const [showInviteTeamModal, setShowInviteTeamModal] = useState(false);
+  const [editingTeamMemberId, setEditingTeamMemberId] = useState(null);
+  const [removingTeamMember, setRemovingTeamMember] = useState(null);
+  const [resendingTeamInviteId, setResendingTeamInviteId] = useState(null);
   const [exportRequests, setExportRequests] = useState(null);
   const [exportRequestsLoading, setExportRequestsLoading] = useState(false);
   const [exportSubmitting, setExportSubmitting] = useState(false);
+  const [downloadingExportId, setDownloadingExportId] = useState(null);
   // Panel 6's real live feed — every en_route/on_site job with its own
   // recent field_events, grouped server-side (list-live-feed). Polled while
   // this panel is active; see the interval effect below.
@@ -308,6 +313,22 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
     }
   }, []);
 
+  const resendTeamInvite = async (member) => {
+    setResendingTeamInviteId(member.id);
+    try {
+      const res = await api.resendTeamInvite(member.id);
+      if (res.credential_delivery?.delivered) {
+        flash(`Setup link resent to ${member.email}.`);
+      } else if (res.credential_delivery?.setup_link) {
+        setModalNotice({ name: member.email, login: member.email, link: res.credential_delivery.setup_link, warning: res.credential_delivery.warning });
+      }
+    } catch (err) {
+      flash(err.message || 'Failed to resend invite.');
+    } finally {
+      setResendingTeamInviteId(null);
+    }
+  };
+
   const loadAuditLog = useCallback(async () => {
     setAuditLogLoading(true);
     try {
@@ -411,7 +432,10 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
     };
   };
   const activeJobs = (realJobs ?? []).map(toBoardJob);
-  const canManageJobs = tenant.role === 'owner_admin';
+  const perms = permissionsFor(tenant.role);
+  const canScheduleJobs = perms.canScheduleJobs;
+  const canManageFleet = perms.canManageFleet;
+  const canManageCustomersPerm = perms.canManageCustomers;
   // Drives the panel title, KPI label, and empty-state copy consistently
   // across the three view modes: All (default), Today, or a specific day.
   const boardDateLabel = selectedDate === null ? 'All jobs'
@@ -446,7 +470,7 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
   const processedMtd = thisMonthPaid.reduce((sum, i) => sum + Number(i.total || 0), 0);
   const money = (n) => `$${n.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
   const flash = message => { setToast(message); setTimeout(() => setToast(''), 2800); };
-  const displayTechs = realTechs !== null ? realTechs : mockTechnicians;
+  const displayTechs = realTechs ?? [];
 
   const kpis = [
     { label: selectedDate === null ? 'ALL JOBS' : selectedDate === TODAY_STR ? "TODAY'S JOBS" : 'JOBS THIS DAY', value: activeJobs.length, sub: `${activeJobs.filter(j => j.status === 'on_site').length} on site · ${activeJobs.filter(j => j.status === 'en_route').length} en route`, color: 'green' },
@@ -475,6 +499,21 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
     }
   };
 
+  // The row's download_url_ref is just an S3 key (see process-export-queue's
+  // header comment for why) — a fresh, short-lived signed URL is minted on
+  // every click, not stored/reused.
+  const downloadExport = async (id) => {
+    setDownloadingExportId(id);
+    try {
+      const { url } = await api.getExportDownloadUrl(id);
+      window.open(url, '_blank', 'noopener');
+    } catch (err) {
+      flash(err.message || 'Failed to get download link.');
+    } finally {
+      setDownloadingExportId(null);
+    }
+  };
+
   const toggleRetentionPause = async (row) => {
     setRetentionBusyId(row.customer_id);
     try {
@@ -488,16 +527,16 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
   };
 
   const pages = ['Live dispatch', 'Approvals queue', 'Technicians', 'Fleet & vehicles', 'Customer database', 'Live field data', 'Invoices & payments', 'Reports & analytics', 'Data archive & export', 'Team & access', 'Knowledge Base'];
-  // add-technician/list-technicians are owner_admin-only server-side
-  // (backend/sql/006_technicians_fix_identity.sql) — hide the write action
-  // for other roles instead of letting them hit a 403 on submit.
-  const canManageTechnicians = tenant.role === 'owner_admin';
+  // add-technician/list-technicians are owner_admin-only server-side —
+  // hide the write action for other roles instead of letting them hit a
+  // 403 on submit.
+  const canManageTechnicians = perms.canManageTechnicians;
   const editingTech = editingTechId ? displayTechs.find(t => t.id === editingTechId) || null : null;
   const editingVehicle = editingVehicleId ? displayVehicles.find(v => v.id === editingVehicleId) || null : null;
   const editingCustomer = editingCustomerId ? displayCustomers.find(c => c.id === editingCustomerId) || null : null;
 
   return <div className={`dashboard-shell page-${activePage}`}>
-    <header className="dashboard-topbar"><div className="logo">FIELDLOOP</div><span className="divider" /><strong>{tenant.name}</strong><nav>Command Center</nav><Pill><i className="green" /> MFA verified · session 07:42</Pill><span className="top-user">{tenant.user} · {tenant.role}</span><Button onClick={() => { clearAllPersistedDashboardState(); onLogout(); }}><LogOut size={15} /> Logout</Button></header>
+    <header className="dashboard-topbar"><div className="logo">FIELDLOOP</div><span className="divider" /><strong>{tenant.name}</strong><nav>Command Center</nav><span className="top-user">{tenant.user} · {tenant.role}</span><Button onClick={() => { clearAllPersistedDashboardState(); onLogout(); }}><LogOut size={15} /> Logout</Button></header>
     <div className="dashboard-layout"><aside className="dashboard-sidebar"><span className="sidebar-label">COMMAND DASHBOARD</span>{pages.map((page, index) => <button key={page} className={activePage === index + 1 ? 'active' : ''} onClick={() => { setActivePage(index + 1); window.scrollTo({ top: 0, behavior: 'smooth' }); }}><b>{index + 1}</b>{page}</button>)}</aside>
     <main className="dashboard-main">
       {toast && <div className="toast"><Check size={17} />{toast}</div>}
@@ -509,22 +548,22 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
         </div>
         <button onClick={() => setModalNotice(null)} style={{ background: 'none', border: 0, cursor: 'pointer', font: 'inherit', fontWeight: 'bold' }}>✕</button>
       </div>}
-      <div className="security-banner"><div className="security-icon"><Lock size={20} /></div><div><label>SIGNED IN AS</label><strong>{tenant.user} · {tenant.role}</strong><small>MFA <em>Verified (TOTP)</em></small></div><div className="security-side"><label>AUTH LEVEL</label><strong>Full read/write · billing</strong><label>IDLE TIMEOUT</label><span>20 minutes</span></div></div>
+      <div className="security-banner"><div className="security-icon"><Lock size={20} /></div><div><label>SIGNED IN AS</label><strong>{tenant.user} · {tenant.role}</strong></div><div className="security-side"><label>AUTH LEVEL</label><strong>Full read/write · billing</strong></div></div>
       <div className="breadcrumb">Command Center <ChevronRight size={14} /> Dashboard</div><div className="greeting"><div><h1>{greeting}, {tenant.user} <Pill>{now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} · {now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</Pill></h1><p><b>{activeJobs.length} jobs{selectedDate === null ? ' total' : selectedDate === TODAY_STR ? ' scheduled today' : ` on ${boardDateLabel}`}</b> · <b>{pendingEstimates.length} estimate{pendingEstimates.length === 1 ? '' : 's'} need{pendingEstimates.length === 1 ? 's' : ''} your approval</b> · <b>{money(unpaidTotal)} in unpaid invoices</b></p></div></div>
       <div className="kpi-grid">{kpis.map(k => <article className="kpi" key={k.label}><label>{k.label}</label><strong className={k.color || ''}>{k.value}</strong><small>{k.sub}</small></article>)}</div>
-      <Panel num="1" title={`Live dispatch board — ${boardDateLabel}`} actions={<><div className="date-nav"><CalendarDays size={15} /><input type="date" value={selectedDate || ''} onChange={e => setSelectedDate(e.target.value || null)} /></div>{selectedDate !== null && <Button onClick={() => setSelectedDate(null)}>All</Button>}{selectedDate !== TODAY_STR && <Button onClick={() => setSelectedDate(TODAY_STR)}>Today</Button>}{canManageJobs && VOICE_CAPTURE_SUPPORTED && <Button onClick={() => setShowVoiceCapture(true)} title="Schedule a job by speaking the details"><Mic size={15} /> Voice schedule</Button>}{canManageJobs && !VOICE_CAPTURE_SUPPORTED && <Button disabled title="Voice capture needs a Chromium-based browser (Chrome or Edge)"><Mic size={15} /> Voice schedule</Button>}{canManageJobs && <Button primary onClick={() => setShowCreateJobModal(true)}><Plus size={15} /> Schedule new job</Button>}</>}>
+      <Panel num="1" title={`Live dispatch board — ${boardDateLabel}`} actions={<><div className="date-nav"><CalendarDays size={15} /><input type="date" value={selectedDate || ''} onChange={e => setSelectedDate(e.target.value || null)} /></div>{selectedDate !== null && <Button onClick={() => setSelectedDate(null)}>All</Button>}{selectedDate !== TODAY_STR && <Button onClick={() => setSelectedDate(TODAY_STR)}>Today</Button>}{canScheduleJobs && VOICE_CAPTURE_SUPPORTED && <Button onClick={() => setShowVoiceCapture(true)} title="Schedule a job by speaking the details"><Mic size={15} /> Voice schedule</Button>}{canScheduleJobs && !VOICE_CAPTURE_SUPPORTED && <Button disabled title="Voice capture needs a Chromium-based browser (Chrome or Edge)"><Mic size={15} /> Voice schedule</Button>}{canScheduleJobs && <Button primary onClick={() => setShowCreateJobModal(true)}><Plus size={15} /> Schedule new job</Button>}</>}>
         {jobsError && <div className="tech-error-banner">{jobsError}</div>}
-        {jobsLoading ? <div className="loading-roster">Loading dispatch board…</div> : activeJobs.length === 0 ? <div className="loading-roster">{selectedDate === null ? 'No jobs found.' : `No jobs scheduled for ${boardDateLabel}.`}</div> : <div className="dispatch">{activeJobs.map(job => <div className="dispatch-row" key={job.id}><div className="time-slot">{job.time.split(' ')[0]}<small>{job.time.split(' ')[1]}</small></div><article className="job-card"><label>{job.id} · {job.trade}</label><h3>{job.title}</h3><p>{job.address} · {job.phone}</p><div className="chips">{job.techs.map(t => <Pill key={t} tone="gray">👤 {t}</Pill>)}{job.vehicle && <Pill tone="gray">🚐 {job.vehicle}</Pill>}{job.warning && <Pill tone="amber">⚠ {job.warning}</Pill>}{job.estimate && <Pill>{job.estimate}</Pill>}</div><div className="job-footer"><div>{job.reassignable ? <select value={job.techId} disabled={reassignBusyId === job.rawId} onChange={e => reassignJob(job.rawId, e.target.value)}><option value="">Reassign tech…</option>{displayTechs.map(t => <option key={t.id || t.name} value={t.id || ''}>{t.full_name || t.name}</option>)}</select> : <Button disabled title="This job has moved past the dispatch stage">Reassign tech</Button>}<Button onClick={() => flash('Vehicle swap is a mock action.')}>Swap vehicle</Button><Button onClick={() => flash('Customer text is queued as a mock action.')}>Text customer</Button><Button onClick={() => setViewingJobFileId(job.rawId)}>View job file</Button></div><Status color={job.statusColor}>{job.detail}</Status></div></article></div>)}</div>}
+        {jobsLoading ? <div className="loading-roster">Loading dispatch board…</div> : activeJobs.length === 0 ? <div className="loading-roster">{selectedDate === null ? 'No jobs found.' : `No jobs scheduled for ${boardDateLabel}.`}</div> : <div className="dispatch">{activeJobs.map(job => <div className="dispatch-row" key={job.id}><div className="time-slot">{job.time.split(' ')[0]}<small>{job.time.split(' ')[1]}</small></div><article className="job-card"><label>{job.id} · {job.trade}</label><h3>{job.title}</h3><p>{job.address} · {job.phone}</p><div className="chips">{job.techs.map(t => <Pill key={t} tone="gray">👤 {t}</Pill>)}{job.vehicle && <Pill tone="gray">🚐 {job.vehicle}</Pill>}{job.warning && <Pill tone="amber">⚠ {job.warning}</Pill>}{job.estimate && <Pill>{job.estimate}</Pill>}</div><div className="job-footer"><div>{job.reassignable && perms.canAssignTechnicians ? <select value={job.techId} disabled={reassignBusyId === job.rawId} onChange={e => reassignJob(job.rawId, e.target.value)}><option value="">Reassign tech…</option>{displayTechs.map(t => <option key={t.id || t.name} value={t.id || ''}>{t.full_name || t.name}</option>)}</select> : <Button disabled title={perms.canAssignTechnicians ? 'This job has moved past the dispatch stage' : 'Your role cannot reassign technicians'}>Reassign tech</Button>}<Button onClick={() => setViewingJobFileId(job.rawId)}>View job file</Button></div><Status color={job.statusColor}>{job.detail}</Status></div></article></div>)}</div>}
       </Panel>
       <Panel num="2" title="Approvals queue — needs your decision" actions={<Pill tone="amber">◷ {pendingEstimates.length} pending</Pill>}>
         {estimatesLoading ? <div className="loading-roster">Loading approvals…</div> : (realEstimates ?? []).length === 0 ? <div className="loading-roster">No estimates or change orders yet — these are created and sent by the technician from the field, not from this dashboard.</div> : <>
-          {[...(realEstimates ?? [])].sort((a, b) => (a.status === 'signed' ? -1 : 0) - (b.status === 'signed' ? -1 : 0)).map(e => <EstimateCard key={e.id} estimate={e} flash={flash}
+          {[...(realEstimates ?? [])].sort((a, b) => (a.status === 'signed' ? -1 : 0) - (b.status === 'signed' ? -1 : 0)).map(e => <EstimateCard key={e.id} estimate={e} flash={flash} canApprove={perms.canApproveEstimates}
             onApprove={async (id) => { await api.updateEstimate(id, { status: 'approved' }); flash('Approved and added to billing.'); await loadEstimates(); }}
             onReject={async (id) => { await api.updateEstimate(id, { status: 'rejected' }); flash('Rejected.'); await loadEstimates(); }}
           />)}
         </>}
       </Panel>
-      <Panel num="3" title={`Technicians (${displayTechs.length})`} actions={<><Button onClick={() => flash('Invite link action.')}><UserPlus size={15} /> Send invite link</Button><Button onClick={() => flash('Export roster action.')}>↓ Export roster</Button>{canManageTechnicians && <Button primary onClick={() => setShowAddTechModal(true)}><Plus size={15} /> Add technician</Button>}</>}>
+      <Panel num="3" title={`Technicians (${displayTechs.length})`} actions={<>{canManageTechnicians && <Button primary onClick={() => setShowAddTechModal(true)}><Plus size={15} /> Add technician</Button>}</>}>
         {techLoading ? <div className="loading-roster">Loading roster from database…</div> : <DataTable headers={['NAME', 'ROLE & SPECIALTY', 'CONTACT', 'CERTIFICATIONS', 'INVITE STATUS', 'ACTIONS']}>{displayTechs.map(t => {
           const name = t.full_name || t.name;
           const roleText = t.role || t.specialty || 'Technician';
@@ -547,7 +586,7 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
           </tr>;
         })}</DataTable>}
       </Panel>
-      <Panel num="4" title={`Fleet & vehicles (${displayVehicles.filter(v => v.is_active).length})`} actions={<>{canManageJobs && <Button primary onClick={() => setShowAddVehicleModal(true)}><Plus size={15} /> Add vehicle</Button>}</>}>
+      <Panel num="4" title={`Fleet & vehicles (${displayVehicles.filter(v => v.is_active).length})`} actions={<>{canManageFleet && <Button primary onClick={() => setShowAddVehicleModal(true)}><Plus size={15} /> Add vehicle</Button>}</>}>
         {vehiclesLoading ? <div className="loading-roster">Loading fleet…</div> : displayVehicles.length === 0 ? <div className="loading-roster">No vehicles added yet.</div> : (
           <DataTable headers={['UNIT', 'VEHICLE', 'ASSIGNED DRIVER', 'STATUS', 'HEALTH', 'ACTIONS']}>
             {displayVehicles.map(v => {
@@ -558,7 +597,7 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
                 <td>{v.driver_name || '—'}</td>
                 <td><Pill tone={v.is_active ? 'green' : 'gray'}>{v.is_active ? 'active' : 'retired'}</Pill></td>
                 <td><Status color={health.color}>{health.text}</Status></td>
-                <td>{canManageJobs ? <>
+                <td>{canManageFleet ? <>
                   <Button onClick={() => setEditingVehicleId(v.id)}>Edit</Button>{' '}
                   {v.is_active && <Button onClick={async () => { await api.updateVehicle(v.id, { is_active: false }); flash(`${v.unit_number} retired.`); loadVehicles(); }}>Retire</Button>}
                 </> : <span className="muted">—</span>}</td>
@@ -567,7 +606,7 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
           </DataTable>
         )}
       </Panel>
-      <Panel num="5" title="Customer database" actions={<><div className="search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customers" /></div>{canManageJobs && <Button primary onClick={() => setShowAddCustomerModal(true)}><Plus size={15} /> Add customer</Button>}</>}>
+      <Panel num="5" title="Customer database" actions={<><div className="search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search customers" /></div>{canManageCustomersPerm && <Button primary onClick={() => setShowAddCustomerModal(true)}><Plus size={15} /> Add customer</Button>}</>}>
         {customersLoading ? <div className="loading-roster">Loading customers…</div> : filteredCustomers.length === 0 ? <div className="loading-roster">{displayCustomers.length === 0 ? 'No customers yet.' : `No customers match "${search}".`}</div> : (
           <DataTable headers={['CUSTOMER', 'PHONE', 'EMAIL', 'ADDRESS', 'JOBS', 'LIFETIME VALUE', 'ACTIONS']}>
             {filteredCustomers.map(c => <tr key={c.id}>
@@ -577,7 +616,7 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
               <td>{c.service_address}</td>
               <td>{c.job_count}{c.active_job_count > 0 ? ` (${c.active_job_count} active)` : ''}</td>
               <td><b>${Number(c.lifetime_value || 0).toLocaleString()}</b></td>
-              <td>{canManageJobs ? <Button onClick={() => setEditingCustomerId(c.id)}>Edit</Button> : <span className="muted">—</span>}</td>
+              <td>{canManageCustomersPerm ? <Button onClick={() => setEditingCustomerId(c.id)}>Edit</Button> : <span className="muted">—</span>}</td>
             </tr>)}
           </DataTable>
         )}
@@ -590,7 +629,7 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
           </div>
         )}
       </Panel>
-      <Panel num="7" title="Invoices & payments" actions={<Button>↓ Export CSV</Button>}>
+      <Panel num="7" title="Invoices & payments">
         <Invoices invoices={realInvoices} loading={invoicesLoading} />
         <div className="reconciliation"><b>Reconciliation summary — month to date</b><p><strong>{money(processedMtd)} processed</strong> · {money(platformFeeMtd)} platform fee withheld · <strong>{money(processedMtd - platformFeeMtd)} net</strong> to your account.</p></div>
       </Panel>
@@ -599,10 +638,10 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
           <TechnicianJobReport jobs={reportJobs} technicians={displayTechs} loading={reportJobsLoading} />
           <FleetHealthReport vehicles={displayVehicles} />
         </div>
-        <RetentionQueue queue={retentionQueue} loading={retentionLoading} busyId={retentionBusyId} onTogglePause={toggleRetentionPause} />
+        <RetentionQueue queue={retentionQueue} loading={retentionLoading} busyId={retentionBusyId} onTogglePause={toggleRetentionPause} canManage={perms.canManageRetention} />
       </Panel>
-      <Panel num="9" title="Data archive & export" actions={<span className="muted">Request tracking is real · file delivery is still being built</span>}>
-        <div className="ownership"><Archive size={21} /><div><b>You own your data. FieldLoop retains it for you.</b><p>Every request below is tracked for real. Automatic delivery — watermarked files via a secure 72-hour download link — isn't built yet; a FieldLoop team member can fulfill a request manually in the meantime.</p></div></div>
+      <Panel num="9" title="Data archive & export" actions={<span className="muted">Full/jobs/invoices exports are real · single-job &amp; media exports aren't available yet</span>}>
+        <div className="ownership"><Archive size={21} /><div><b>You own your data. FieldLoop retains it for you.</b><p>Full, jobs-only, and invoices-only exports generate a real file and a secure 72-hour download link. Single-job and media-only exports aren't available yet — a request for either will show as "failed."</p></div></div>
         <div className="export-form">
           <h3>Request a new data export</h3>
           <div className="form-grid">
@@ -610,8 +649,8 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
               <option value="full">All records (full company archive)</option>
               <option value="jobs">Jobs only</option>
               <option value="invoices">Invoices only</option>
-              <option value="single_job">Single job</option>
-              <option value="media_only">Media only</option>
+              <option value="single_job">Single job (not available yet)</option>
+              <option value="media_only">Media only (not available yet)</option>
             </select>
             <select value={exportFormat} onChange={e => setExportFormat(e.target.value)}>
               <option value="zip">ZIP (CSV + PDF + JPEG)</option>
@@ -620,44 +659,62 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
             </select>
           </div>
           <div className="include-chips">{['Job records', 'Customer records', 'Estimates & change orders', 'Invoices & payments', 'Site photos', 'Voice notes / transcripts', 'GPS timelines'].map(item => <button key={item} className={include.includes(item) ? 'selected' : ''} onClick={() => setInclude(x => x.includes(item) ? x.filter(y => y !== item) : [...x, item])}>{include.includes(item) ? '✓ ' : ''}{item}</button>)}</div>
-          <div className="export-submit"><span>Delivered to {tenant.email} once ready</span><Button primary onClick={requestExport} disabled={exportSubmitting}><Download size={15} /> {exportSubmitting ? 'Submitting…' : 'Request export'}</Button></div>
+          {perms.canRequestExport ? (
+            <div className="export-submit"><span>A download link appears in the table below once ready (usually within a couple minutes)</span><Button primary onClick={requestExport} disabled={exportSubmitting}><Download size={15} /> {exportSubmitting ? 'Submitting…' : 'Request export'}</Button></div>
+          ) : (
+            <div className="export-submit"><span className="muted">Your role can't request exports.</span></div>
+          )}
         </div>
         {exportRequestsLoading ? <div className="loading-roster">Loading export history…</div> : (exportRequests ?? []).length === 0 ? <div className="loading-roster">No export requests yet.</div> : (
-          <DataTable headers={['REQUESTED', 'TYPE', 'FORMAT', 'INCLUDES', 'STATUS']}>
+          <DataTable headers={['REQUESTED', 'TYPE', 'FORMAT', 'INCLUDES', 'STATUS', 'DOWNLOAD']}>
             {exportRequests.map(r => <tr key={r.id}>
               <td>{new Date(r.requested_at).toLocaleString('sv-SE').slice(0, 16)}</td>
               <td>{r.export_type.replace('_', ' ')}</td>
               <td>{r.output_format.toUpperCase()}</td>
               <td>{(r.include_categories || []).join(', ') || '—'}</td>
               <td><Pill tone={r.status === 'ready' ? 'green' : r.status === 'failed' || r.status === 'expired' ? 'gray' : 'blue'}>{r.status}</Pill></td>
+              <td>{r.status === 'ready' ? (
+                <Button onClick={() => downloadExport(r.id)} disabled={downloadingExportId === r.id}>
+                  <Download size={14} /> {downloadingExportId === r.id ? 'Preparing…' : 'Download'}
+                </Button>
+              ) : <span className="muted">—</span>}</td>
             </tr>)}
           </DataTable>
         )}
       </Panel>
-      <Panel num="10" title="Team & access" actions={<Button onClick={() => { const next = !showAuditLog; setShowAuditLog(next); if (next && auditLog === null) loadAuditLog(); }}><FileText size={15} /> {showAuditLog ? 'Hide' : 'View'} audit log</Button>}>
-        <div className="owner-warning">⚠ <div><b>One role today</b><p>contractor_users currently only supports Owner/Admin — a full multi-role team system (dispatcher, bookkeeper, field lead, with real permission gating across the dashboard) is planned but not built yet. See HANDOFF.md §28.</p></div></div>
-        {teamLoading ? <div className="loading-roster">Loading team…</div> : (
-          <DataTable headers={['TEAM MEMBER', 'ROLE', 'MFA', 'LAST LOGIN']}>
-            {(realTeam ?? []).map(t => <tr key={t.id}>
-              <td><Avatar name={t.email} /> {t.email}</td>
-              <td><Pill tone={t.is_designated_admin ? 'green' : 'blue'}>{t.role}{t.is_designated_admin ? ' · designated admin' : ''}</Pill></td>
-              <td><Status color={t.mfa_enabled ? 'green' : 'gray'}>{t.mfa_enabled ? '✓ Enabled' : 'Not enabled'}</Status></td>
-              <td>{t.last_login_at ? new Date(t.last_login_at).toLocaleString() : 'Not tracked yet'}</td>
-            </tr>)}
-          </DataTable>
-        )}
-        {showAuditLog && <div className="audit-log">
-          <h3>Recent account activity</h3>
-          <p className="muted" style={{ fontSize: '12px' }}>Logged by FieldLoop for security/compliance — mostly staff-side actions on your account (onboarding, support), not a full team-activity feed.</p>
-          {auditLogLoading ? <div className="loading-roster">Loading activity…</div> : (auditLog ?? []).length === 0 ? <div className="loading-roster">No recorded activity yet.</div> : (
-            <DataTable headers={['WHEN', 'ACTION', 'DETAIL', 'BY']}>
-              {auditLog.map(e => <tr key={e.id}><td>{new Date(e.timestamp).toLocaleString()}</td><td>{e.action}</td><td>{e.field_accessed || '—'}</td><td>{e.actor}</td></tr>)}
+      <Panel num="10" title="Team & access" actions={perms.canManageTeam ? <><Button onClick={() => setShowInviteTeamModal(true)}><UserPlus size={15} /> Invite team member</Button>{' '}<Button onClick={() => { const next = !showAuditLog; setShowAuditLog(next); if (next && auditLog === null) loadAuditLog(); }}><FileText size={15} /> {showAuditLog ? 'Hide' : 'View'} audit log</Button></> : null}>
+        {!perms.canManageTeam ? <p className="muted">Your role doesn't have access to Team & access.</p> : <>
+          {teamLoading ? <div className="loading-roster">Loading team…</div> : (
+            <DataTable headers={['TEAM MEMBER', 'ROLE', 'SETUP', 'MFA', 'LAST LOGIN', 'ACTIONS']}>
+              {(realTeam ?? []).map(t => <tr key={t.id}>
+                <td><Avatar name={t.email} /> {t.email}</td>
+                <td><Pill tone={t.is_designated_admin ? 'green' : 'blue'}>{t.role}{t.is_designated_admin ? ' · designated admin' : ''}</Pill></td>
+                <td><Status color={t.password_changed ? 'green' : 'amber'}>{t.password_changed ? '✓ Complete' : 'Invite pending'}</Status></td>
+                <td><Status color={t.mfa_enabled ? 'green' : 'gray'}>{t.mfa_enabled ? '✓ Enabled' : 'Not enabled'}</Status></td>
+                <td>{t.last_login_at ? new Date(t.last_login_at).toLocaleString() : 'Not tracked yet'}</td>
+                <td>
+                  <Button onClick={() => setEditingTeamMemberId(t.id)}>Edit role</Button>{' '}
+                  {!t.password_changed && <><Button onClick={() => resendTeamInvite(t)} disabled={resendingTeamInviteId === t.id}>{resendingTeamInviteId === t.id ? 'Sending…' : 'Resend invite'}</Button>{' '}</>}
+                  {t.id !== tenant.contractorUserId && <Button onClick={() => setRemovingTeamMember(t)}>Remove</Button>}
+                </td>
+              </tr>)}
             </DataTable>
           )}
-        </div>}
+          {showAuditLog && <div className="audit-log">
+            <h3>Recent account activity</h3>
+            <p className="muted" style={{ fontSize: '12px' }}>Logged by FieldLoop for security/compliance — mostly staff-side actions on your account (onboarding, support), not a full team-activity feed.</p>
+            {auditLogLoading ? <div className="loading-roster">Loading activity…</div> : (auditLog ?? []).length === 0 ? <div className="loading-roster">No recorded activity yet.</div> : (
+              <DataTable headers={['WHEN', 'ACTION', 'DETAIL', 'BY']}>
+                {auditLog.map(e => <tr key={e.id}><td>{new Date(e.timestamp).toLocaleString()}</td><td>{e.action}</td><td>{e.field_accessed || '—'}</td><td>{e.actor}</td></tr>)}
+              </DataTable>
+            )}
+          </div>}
+        </>}
       </Panel>
-      <Panel num="11" title="Knowledge Base — submit a fact" actions={<span className="muted">Reviewed by FieldLoop before it's searchable</span>}><KnowledgeBaseSubmission flash={flash} /></Panel>
-      <footer><Button><Download size={15} /> Export dashboard view</Button><Button>? Contact support</Button><Button primary disabled>✓ All caught up</Button></footer>
+      <Panel num="11" title="Knowledge Base — submit a fact" actions={<span className="muted">Reviewed by FieldLoop before it's searchable</span>}>
+        {perms.canSubmitKb ? <KnowledgeBaseSubmission flash={flash} /> : <p className="muted">Your role doesn't have access to Knowledge Base submissions.</p>}
+      </Panel>
+      <footer><Button primary disabled>✓ All caught up</Button></footer>
     </main></div>
     {showAddTechModal && <AddTechnicianModal onClose={() => setShowAddTechModal(false)} onSuccess={(msg, notice) => { flash(msg); if (notice) setModalNotice(notice); loadTechs(); }} />}
     {editingTech && <EditTechnicianModal technician={editingTech} onClose={() => setEditingTechId(null)} onSuccess={(msg) => { flash(msg); setEditingTechId(null); loadTechs(); }} />}
@@ -674,6 +731,28 @@ export default function ContractorCommandDashboard({ tenant, onLogout }) {
           loadTechs();
         } catch (err) {
           flash(err.message || 'Failed to deactivate technician.');
+        }
+      }}
+    />}
+    {showInviteTeamModal && <InviteTeamMemberModal onClose={() => setShowInviteTeamModal(false)} onSuccess={(msg, notice) => { flash(msg); if (notice) setModalNotice(notice); loadTeam(); }} />}
+    {editingTeamMemberId && <EditTeamMemberRoleModal
+      member={(realTeam ?? []).find(t => t.id === editingTeamMemberId)}
+      onClose={() => setEditingTeamMemberId(null)}
+      onSuccess={(msg) => { flash(msg); setEditingTeamMemberId(null); loadTeam(); }}
+    />}
+    {removingTeamMember && <ConfirmModal
+      title="Remove team member?"
+      message={`This will revoke ${removingTeamMember.email}'s dashboard login. This can't be undone from here.`}
+      confirmLabel="Remove"
+      onCancel={() => setRemovingTeamMember(null)}
+      onConfirm={async () => {
+        try {
+          await api.removeTeamMember(removingTeamMember.id);
+          flash(`${removingTeamMember.email} removed.`);
+          setRemovingTeamMember(null);
+          loadTeam();
+        } catch (err) {
+          flash(err.message || 'Failed to remove team member.');
         }
       }}
     />}
@@ -1355,6 +1434,125 @@ function EditTechnicianModal({ technician, onClose, onSuccess }) {
   );
 }
 
+// Single admin role only for now, per the project owner's direction — this
+// invite flow adds more owner_admin users, not different roles. Full
+// multi-role RBAC is real, deferred future work (see HANDOFF.md).
+const TEAM_ROLES = [
+  { value: 'owner_admin', label: 'Owner / Admin' },
+];
+
+function InviteTeamMemberModal({ onClose, onSuccess }) {
+  const [email, setEmail] = useState('');
+  const [role, setRole] = useState('dispatcher');
+  const [submitting, setSubmitting] = useState(false);
+  const [serverError, setServerError] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setServerError('');
+    if (!email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setServerError('Enter a valid email address.');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const res = await api.inviteTeamMember({ email: email.trim(), role });
+      let notice = null;
+      let msg = `Invited ${email.trim()} as ${TEAM_ROLES.find(r => r.value === role)?.label}.`;
+      if (res.credential_delivery?.delivered) {
+        msg += ' Setup link sent by email.';
+      } else if (res.credential_delivery?.setup_link) {
+        notice = { name: email.trim(), login: email.trim(), link: res.credential_delivery.setup_link, warning: res.credential_delivery.warning };
+      }
+      onSuccess(msg, notice);
+    } catch (err) {
+      setServerError(err.message || 'Failed to send invite.');
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3><UserPlus size={18} /> Invite Team Member</h3>
+          <button className="modal-close" type="button" onClick={onClose}>✕</button>
+        </div>
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="modal-body">
+            {serverError && <div className="tech-error-banner">{serverError}</div>}
+            <div className="tech-form-grid">
+              <div className="tech-form-group full-width">
+                <label>EMAIL ADDRESS *</label>
+                <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="teammate@example.com" required />
+              </div>
+              <div className="tech-form-group full-width">
+                <label>ROLE *</label>
+                <select value={role} onChange={e => setRole(e.target.value)}>
+                  {TEAM_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="modal-footer">
+            <Button type="button" onClick={onClose} disabled={submitting}>Cancel</Button>
+            <Button type="submit" primary disabled={submitting}>{submitting ? 'Sending invite…' : 'Send Invite'}</Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function EditTeamMemberRoleModal({ member, onClose, onSuccess }) {
+  const [role, setRole] = useState(member?.role || 'dispatcher');
+  const [submitting, setSubmitting] = useState(false);
+  const [serverError, setServerError] = useState('');
+
+  if (!member) return null;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setServerError('');
+    setSubmitting(true);
+    try {
+      await api.updateTeamMemberRole(member.id, role);
+      onSuccess(`${member.email}'s role updated to ${TEAM_ROLES.find(r => r.value === role)?.label}.`);
+    } catch (err) {
+      setServerError(err.message || 'Failed to update role.');
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-card" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <h3>Edit Role — {member.email}</h3>
+          <button className="modal-close" type="button" onClick={onClose}>✕</button>
+        </div>
+        <form onSubmit={handleSubmit} noValidate>
+          <div className="modal-body">
+            {serverError && <div className="tech-error-banner">{serverError}</div>}
+            <div className="tech-form-grid">
+              <div className="tech-form-group full-width">
+                <label>ROLE *</label>
+                <select value={role} onChange={e => setRole(e.target.value)}>
+                  {TEAM_ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="modal-footer">
+            <Button type="button" onClick={onClose} disabled={submitting}>Cancel</Button>
+            <Button type="submit" primary disabled={submitting}>{submitting ? 'Saving…' : 'Save Role'}</Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function ConfirmModal({ title, message, confirmLabel = 'Confirm', onCancel, onConfirm }) {
   const [submitting, setSubmitting] = useState(false);
 
@@ -1467,8 +1665,9 @@ function JobFileModal({ jobId, onClose }) {
 // real action is approving or rejecting one the customer has already
 // signed (see update-estimate/index.js). Drafting, editing, and sending to
 // the customer all happen on the technician's mobile app, not here.
-function EstimateCard({ estimate, flash, onApprove, onReject }) {
+function EstimateCard({ estimate, flash, onApprove, onReject, canApprove }) {
   const [busy, setBusy] = useState(false);
+  const [confirmingReject, setConfirmingReject] = useState(false);
 
   const run = async (fn) => {
     setBusy(true);
@@ -1493,11 +1692,18 @@ function EstimateCard({ estimate, flash, onApprove, onReject }) {
         <h3>{isChangeOrder ? '⚠' : '✎'} {isChangeOrder ? 'Change order' : 'Estimate'} — {jobLabel} <Pill tone={statusTone}>{estimate.status.toUpperCase()}</Pill></h3>
         <p>{customerName}{estimate.created_at ? ` · ${new Date(estimate.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}` : ''}</p>
         {tierValues.length > 0 ? <Stats values={tierValues} /> : <p style={{ color: '#94a3b8' }}>No price entered yet.</p>}
-        {awaitingDecision && <div className="right-actions">
-          <Button disabled={busy} onClick={() => run(() => onReject(estimate.id))}>Reject</Button>
+        {awaitingDecision && canApprove && <div className="right-actions">
+          <Button disabled={busy} onClick={() => setConfirmingReject(true)}>Reject</Button>
           <Button primary disabled={busy} onClick={() => run(() => onApprove(estimate.id))}><Check size={15} /> Approve & bill</Button>
         </div>}
       </div>
+      {confirmingReject && <ConfirmModal
+        title="Reject this estimate?"
+        message={`${customerName} already signed this ${isChangeOrder ? 'change order' : 'estimate'} in the field. Rejecting it cannot be undone — the technician will need to send a new one.`}
+        confirmLabel="Reject"
+        onCancel={() => setConfirmingReject(false)}
+        onConfirm={async () => { await run(() => onReject(estimate.id)); setConfirmingReject(false); }}
+      />}
     </article>
   );
 }
@@ -2221,7 +2427,7 @@ function FleetHealthReport({ vehicles }) {
 // (see backend/functions/list-retention-queue/index.js's header for the
 // documented anchor-date approximation and the 3-vs-4-checkpoint schema
 // gap). Nothing here ever sends anything — no automated dispatch exists yet.
-function RetentionQueue({ queue, loading, busyId, onTogglePause }) {
+function RetentionQueue({ queue, loading, busyId, onTogglePause, canManage }) {
   if (loading) return <article className="retention"><h3>Retention queue — automated customer follow-ups</h3><div className="loading-roster">Loading…</div></article>;
   const rows = queue ?? [];
   return <article className="retention">
@@ -2230,13 +2436,13 @@ function RetentionQueue({ queue, loading, busyId, onTogglePause }) {
       <Pill tone={r.paused ? 'gray' : r.due_now ? 'amber' : 'blue'}>{r.due_now ? 'DUE NOW' : new Date(r.due_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</Pill>
       <span>{r.customer_name} — {r.checkpoint_label}{r.job_id_public ? ` · ${r.job_id_public}` : ''}</span>
       <small>{r.paused ? 'Paused' : r.due_now ? 'Due now' : `Due ${new Date(r.due_at).toLocaleDateString()}`}</small>
-      <Button onClick={() => onTogglePause(r)} disabled={busyId === r.customer_id}>{busyId === r.customer_id ? '…' : r.paused ? 'Resume' : 'Pause'}</Button>
+      {canManage ? <Button onClick={() => onTogglePause(r)} disabled={busyId === r.customer_id}>{busyId === r.customer_id ? '…' : r.paused ? 'Resume' : 'Pause'}</Button> : <span className="muted">—</span>}
     </div>)}
   </article>;
 }
 
 // One card per en_route/on_site job, backing the real Panel 6 (Live field
-// data stream — HANDOFF.md §30). Reuses JobFileModal's exact event-row
+// data stream — HANDOFF.md §31). Reuses JobFileModal's exact event-row
 // shape/labels (FIELD_EVENT_LABELS) and jobStatusColor — this card shows
 // only the most recent few events (already capped server-side by
 // list-live-feed); "View job file" reuses the existing modal for the

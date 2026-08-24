@@ -7,7 +7,7 @@ const CORS_HEADERS = { 'Access-Control-Allow-Origin': '*' };
 
 exports.handler = async (event) => {
   try {
-    const contractorUser = await requireContractorRole(event, ['owner_admin']);
+    const contractorUser = await requireContractorRole(event, ['owner_admin', 'dispatcher', 'bookkeeper']);
     const supabase = await getSupabaseClient();
 
     const { data: requests, error } = await supabase

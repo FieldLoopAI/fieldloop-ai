@@ -29,7 +29,7 @@ function normalizeE164(phone) {
 
 exports.handler = async (event) => {
   try {
-    const contractorUser = await requireContractorRole(event, ['owner_admin']);
+    const contractorUser = await requireContractorRole(event, ['owner_admin', 'dispatcher']);
     const body = JSON.parse(event.body || '{}');
     const { household_name, primary_contact_name, primary_phone, secondary_phone, email, service_address, billing_address, preferred_contact, notes } = body;
 

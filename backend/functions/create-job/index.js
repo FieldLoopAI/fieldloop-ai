@@ -42,7 +42,7 @@ function generateJobIdPublic() {
 
 exports.handler = async (event) => {
   try {
-    const contractorUser = await requireContractorRole(event, ['owner_admin']);
+    const contractorUser = await requireContractorRole(event, ['owner_admin', 'dispatcher']);
     const body = JSON.parse(event.body);
 
     const {

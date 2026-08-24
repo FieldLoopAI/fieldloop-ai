@@ -249,16 +249,42 @@ export const api = {
   updateCustomer: (customerId, changes) =>
     authFetch('customers/update', { body: { customer_id: customerId, ...changes } }),
 
-  // Team & Access (Panel 10) — real contractor_users roster. Currently only
-  // ever returns owner_admin rows: the real CHECK constraint on
-  // contractor_users.role only allows that one value today (HANDOFF.md §10
-  // Round 5) — no multi-role invite flow exists yet.
+  // Team & Access (Panel 10) — real contractor_users roster. Supports
+  // owner_admin/dispatcher/bookkeeper/field_lead as of
+  // backend/sql/015_contractor_users_roles.sql — owner_admin only can call
+  // this (see list-team's own role allowlist).
   listTeam: () => authFetch('team/list', { body: {} }).then((res) => res.team),
 
   // Real access_audit_log entries for this contractor, honestly labeled —
   // mostly FieldLoop staff actions (onboarding, admin), not contractor-side
   // team activity. See list-audit-log's own header comment.
   listAuditLog: () => authFetch('audit-log/list', { body: {} }).then((res) => res.entries),
+
+  // One-time setup-link invite flow for a new team member, mirroring the
+  // technician onboarding pattern (technicians/*) but email-based.
+  inviteTeamMember: (payload) => authFetch('team/invite', { body: payload }),
+
+  resendTeamInvite: (contractorUserId) =>
+    authFetch('team/resend-invite', { body: { contractor_user_id: contractorUserId } }),
+
+  updateTeamMemberRole: (contractorUserId, role) =>
+    authFetch('team/update', { body: { contractor_user_id: contractorUserId, role } }),
+
+  removeTeamMember: (contractorUserId) =>
+    authFetch('team/remove', { body: { contractor_user_id: contractorUserId } }),
+
+  // Unauthenticated, same reasoning as completeTechnicianSetup — called
+  // from the team setup-link page before any session/password exists.
+  completeTeamSetup: async (token, newPassword) => {
+    const res = await fetch(`${BASE_URL}/team/complete-setup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, new_password: newPassword }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || 'Failed to complete setup.');
+    return json;
+  },
 
   // Retention queue (Panel 8 sub-panel) — real due/paused state computed
   // from real jobs + customers.retention_flags. No automated sending exists
@@ -268,10 +294,18 @@ export const api = {
   updateRetentionFlag: (customerId, paused) =>
     authFetch('retention/update', { body: { customer_id: customerId, paused } }),
 
-  // Data Archive & Export (Panel 9) — real request tracking only. Creating a
-  // request writes a real data_export_requests row and leaves it at
-  // 'queued' — no file-generation/delivery pipeline exists yet.
+  // Data Archive & Export (Panel 9) — real request tracking, plus a real
+  // async file-generation pipeline (process-export-queue, polling every few
+  // minutes) for full/jobs/invoices exports. single_job/media_only requests
+  // currently resolve to 'failed' — see process-export-queue's header
+  // comment for why (no job_id field exists on the request to fulfill
+  // single_job, and media lives in a mobile-app-owned S3 bucket this repo
+  // has no access to).
   listExportRequests: () => authFetch('export-requests/list', { body: {} }).then((res) => res.requests),
 
   createExportRequest: (payload) => authFetch('export-requests', { body: payload }),
+
+  // Mints a fresh, short-lived signed URL for a ready export — never a
+  // stored long-lived link, see get-export-download-url's header comment.
+  getExportDownloadUrl: (id) => authFetch('export-requests/download-url', { body: { id } }),
 };

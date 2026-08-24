@@ -46,7 +46,7 @@ const EXTRACTION_SCHEMA = {
 
 exports.handler = async (event) => {
   try {
-    await requireContractorRole(event, ['owner_admin']);
+    await requireContractorRole(event, ['owner_admin', 'dispatcher']);
     const body = JSON.parse(event.body);
     const { transcript, client_now_iso, client_timezone } = body;
 

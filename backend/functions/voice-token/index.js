@@ -20,7 +20,7 @@ const TOKEN_TTL_SECONDS = 300;
 
 exports.handler = async (event) => {
   try {
-    await requireContractorRole(event, ['owner_admin']);
+    await requireContractorRole(event, ['owner_admin', 'dispatcher']);
 
     let apiKey;
     try {

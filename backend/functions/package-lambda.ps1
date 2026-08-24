@@ -20,7 +20,10 @@ param(
     'list-customers', 'add-customer', 'update-customer',
     'list-team', 'list-audit-log', 'list-retention-queue', 'update-retention-flag',
     'list-export-requests', 'create-export-request',
-    'list-live-feed'
+    'list-live-feed',
+    'invite-team-member', 'complete-team-setup', 'resend-team-invite',
+    'update-team-member', 'remove-team-member', 'process-export-queue',
+    'get-export-download-url'
   )]
   [string]$FunctionName
 )

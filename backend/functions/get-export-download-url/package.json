@@ -1,0 +1,13 @@
+{
+  "name": "fieldloop-get-export-download-url",
+  "private": true,
+  "version": "1.0.0",
+  "type": "commonjs",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1095.0",
+    "@aws-sdk/client-secrets-manager": "^3.1095.0",
+    "@aws-sdk/s3-request-presigner": "^3.1095.0",
+    "@supabase/supabase-js": "^2.110.8",
+    "ws": "^8.21.1"
+  }
+}

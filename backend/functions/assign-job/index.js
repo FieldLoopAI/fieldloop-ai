@@ -12,7 +12,7 @@ const REASSIGNABLE_STATUSES = ['draft', 'scheduled'];
 
 exports.handler = async (event) => {
   try {
-    const contractorUser = await requireContractorRole(event, ['owner_admin']);
+    const contractorUser = await requireContractorRole(event, ['owner_admin', 'dispatcher', 'field_lead']);
     const body = JSON.parse(event.body);
     const { job_id, technician_id } = body;
 

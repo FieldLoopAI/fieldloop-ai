@@ -525,6 +525,15 @@ body {
   cursor: not-allowed;
 }
 
+.form-input.error, .form-select.error, .form-textarea.error {
+  border-color: var(--badge-red-text) !important;
+  background-color: var(--badge-red-bg) !important;
+}
+
+.form-input.error:focus, .form-select.error:focus, .form-textarea.error:focus {
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.15) !important;
+}
+
 /* Masked Input Row with Reveal Button */
 .masked-input-group {
   display: flex;

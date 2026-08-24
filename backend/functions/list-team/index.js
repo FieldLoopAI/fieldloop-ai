@@ -1,11 +1,11 @@
 // backend/functions/list-team/index.js
 // POST /team/list — real data for Panel 10 "Team & access". contractor_users
-// currently only ever has role 'owner_admin' — migration 006 deliberately
-// narrowed the CHECK constraint to that single value (HANDOFF.md §10 Round 5)
-// after the original mock UI's dispatcher/bookkeeper/field_lead roles turned
-// out to be guessed, not verified. This just returns whatever real rows
-// exist for the contractor today (in practice: one or a few owner_admins) —
-// a full multi-role team system is future work, not built here.
+// still only ever has role 'owner_admin' — migration 015 added invite/
+// remove plumbing (is_active, password_changed, team_setup_tokens) but
+// deliberately left the single-role CHECK constraint (006) untouched; see
+// 015's header comment and HANDOFF.md §34 for the full multi-role RBAC
+// deferral. This returns every active row for the contractor (in practice:
+// one or a few owner_admins).
 const { requireContractorRole } = require('./shared/contractorAuth');
 const { getSupabaseClient } = require('./shared/supabaseClient');
 
@@ -18,8 +18,9 @@ exports.handler = async (event) => {
 
     const { data: team, error } = await supabase
       .from('contractor_users')
-      .select('id, email, role, is_designated_admin, mfa_enabled, last_login_at, created_at')
+      .select('id, email, role, is_designated_admin, mfa_enabled, last_login_at, password_changed, created_at')
       .eq('contractor_id', contractorUser.contractor_id)
+      .eq('is_active', true)
       .order('created_at');
     if (error) throw new Error(error.message);
 

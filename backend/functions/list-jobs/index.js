@@ -43,7 +43,7 @@ function annotateConflicts(jobs) {
 
 exports.handler = async (event) => {
   try {
-    const contractorUser = await requireContractorRole(event, ['owner_admin']);
+    const contractorUser = await requireContractorRole(event, ['owner_admin', 'dispatcher', 'bookkeeper', 'field_lead']);
     const body = event.body ? JSON.parse(event.body) : {};
     const { from, to } = body;
 
