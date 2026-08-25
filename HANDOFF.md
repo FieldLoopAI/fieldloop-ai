@@ -18,7 +18,9 @@ On the **Contractor Command Dashboard**, two more sections are now real and conf
 
 **Login/routing changed** (§32, 2026-08-22): contractors and staff now share one login page at `/` instead of two separate ones, role is resolved after auth and routed accordingly, and `/staff` now defaults an admin to Platform Overview instead of the Registration wizard.
 
-See **Where things left off** (§9) for the Registration Dashboard's testing history, and §10/§12/§13/§14/§15/§16/§17/§18/§19/§23/§27/§28/§30/§31/§32 for everything found and fixed on the Contractor Command Dashboard side since.
+**Registration Dashboard critical bugs fixed** (§36, 2026-08-24): a dead function was throwing on every save (breaking "Save & Continue" specifically), a tab switch was unmounting/remounting the whole dashboard, masked PII fields (EIN/SSN/DOB/etc.) were losing typed values across that remount, and most fields had no real format validation. All fixed and live-verified, both client- and server-side. This same pass also caught up git with a substantial backlog of already-built-but-uncommitted work (§33/§34/§35) and closed a real deployment gap — `activate-contractor`/`save-system-settings` had new code in the repo that was never actually pushed to the running Lambdas; that's fixed now too.
+
+See **Where things left off** (§9) for the Registration Dashboard's testing history, and §10/§12/§13/§14/§15/§16/§17/§18/§19/§23/§27/§28/§30/§31/§32/§36 for everything found and fixed on the Contractor Command Dashboard side since.
 
 ---
 
@@ -27,7 +29,7 @@ See **Where things left off** (§9) for the Registration Dashboard's testing his
 Two separate products live in one repo:
 
 1. **Registration Dashboard** (`/staff/registration`) — an internal tool for FieldLoop **staff** (roles: `admin`, `onboarding`, `finance`, `support`, `jenex_dev`) to onboard and manage contractor records through an 8-step wizard. **This is what the recent work focused on.** Fully wired to real data. Staff sign in on the same shared login page as contractors (`/`) — see §32 for the unified-login/role-redirect change.
-2. **Contractor Command Dashboard** (`/`, `/dashboard`) — the contractor-facing product (dispatch, technicians, fleet, customers, invoicing, reports, data export, team management). **Only the login/identity is real** — everything else still renders static mock data from `src/command-dashboard/dashboardData.js`. This was a deliberate scope decision (see §7).
+2. **Contractor Command Dashboard** (`/`, `/dashboard`) — the contractor-facing product (dispatch, technicians, fleet, customers, invoicing, reports, data export, team management). **Fully real as of §33** — every panel is wired to Supabase via Lambda; `dashboardData.js` (the last remaining mock artifact, a technician-roster loading fallback) was deleted in §33 once nothing referenced it. See §7 for the two pieces still deliberately unbuilt (Data Export file-delivery, full Team & Access RBAC) — those are scoped future work, not mock UI.
 
 ---
 
@@ -80,18 +82,23 @@ src/
   shared/services/
     supabaseClient.js                  — browser Supabase client, ANON key only, Auth use only
     api.js                             — fetch wrapper for all Lambda calls (attaches JWT bearer token)
-    mockDb.js                          — legacy mock DB; now only used by ContractorCommandDashboard's
-                                          non-identity mock panels (jobs/fleet/customers/etc.)
   shared/
     LoginPage.jsx                      — single real Supabase Auth login page for both contractors and staff (§32)
   registration-dashboard/
-    RegistrationDashboard.jsx          — the 8-step staff wizard, now backed by api.js
+    RegistrationDashboard.jsx          — the 8-step staff wizard, backed by api.js; owns the draft-persist
+                                          sessionStorage cache and cross-step validateStep() (§36)
     useStaffAuth.js                    — session + fl_users role lookup hook
     steps/Step1..Step8*.jsx            — one component per wizard step
   command-dashboard/
-    useContractorAuth.js               — session + contractor_users lookup hook
-    ContractorCommandDashboard.jsx     — receives real `tenant` as a prop; rest of UI still mock
-    dashboardData.js                   — mock jobs/technicians/fleet/customers (tenant removed from here)
+    useContractorAuth.js               — session + contractor_users lookup hook (§34: tenant now also
+                                          carries contractorUserId/contractorId/isDesignatedAdmin)
+    usePermissions.js                  — forward-looking capability gating for the deferred multi-role
+                                          system (§34) — every boolean currently evaluates true, since
+                                          contractor_users.role is still owner_admin-only
+    ContractorCommandDashboard.jsx     — every panel real as of §33; no mock data/fallback file remains
+                                          anywhere in this app (dashboardData.js and mockDb.js both deleted)
+  team-setup/
+    TeamSetupPage.jsx                  — invited team member's one-time setup-link page (§34)
 ```
 
 **Routes** (`src/App.jsx`, §32):
@@ -173,7 +180,14 @@ Each function is its own deployable folder: `index.js` + its own `shared/` copy 
 | `list-retention-queue` | `fieldloop-list-retention-queue` | `POST /retention/list` | owner_admin | §28 — computes real due retention checkpoints from jobs/customers data; never sends anything |
 | `update-retention-flag` | `fieldloop-update-retention-flag` | `POST /retention/update` | owner_admin | §28 — Pause/Resume: toggles `customers.retention_flags.paused` |
 | `list-export-requests` | `fieldloop-list-export-requests` | `POST /export-requests/list` | owner_admin | §28 — real `data_export_requests` rows for the contractor |
-| `create-export-request` | `fieldloop-create-export-request` | `POST /export-requests` | owner_admin | §28 — real request-tracking only; no file-generation pipeline exists yet |
+| `create-export-request` | `fieldloop-create-export-request` | `POST /export-requests` | owner_admin | §28 — real request-tracking only; file-generation now handled async, see `process-export-queue` below |
+| `invite-team-member` | `fieldloop-invite-team-member` | `POST /team/invite` | owner_admin | §34 — one-time setup-link invite for an additional `owner_admin` user (`INVITABLE_ROLES` is a single-value set) |
+| `resend-team-invite` | `fieldloop-resend-team-invite` | `POST /team/resend-invite` | owner_admin | §34 — issues a fresh invite token without invalidating an existing unexpired one |
+| `complete-team-setup` | `fieldloop-complete-team-setup` | `POST /team/complete-setup` | **none — unauthenticated** | §34 — invited user sets their own password via `{ token, new_password }`, mirrors `complete-technician-setup` |
+| `update-team-member` | `fieldloop-update-team-member` | `POST /team/update` | owner_admin | §34 — role update; `VALID_ROLES = ['owner_admin']` today, refuses demoting a company's last `owner_admin` |
+| `remove-team-member` | `fieldloop-remove-team-member` | `POST /team/remove` | owner_admin | §34 — soft-delete (`is_active = false`) + Auth ban, mirrors `deactivate-technician` |
+| `get-export-download-url` | `fieldloop-get-export-download-url` | `POST /export-requests/download-url` | owner_admin | §34 — mints a fresh 15-minute signed S3 URL for a `ready` export, since a URL signed with Lambda's own credentials can't outlive its 1-hour session |
+| `process-export-queue` | `fieldloop-process-export-queue` | **none — EventBridge schedule, not an HTTP route** (`fieldloop-process-export-queue-schedule`, every 2 minutes) | n/a | §34 — picks up `queued` export requests, generates the real ZIP/CSV/PDF, uploads to S3, flips the row to `ready`/`failed` |
 
 **Shared helpers** (`backend/functions/shared/`):
 - `auth.js` — `requireRole(event, allowedRoles)`: validates the JWT, looks up the caller's `fl_users` row, returns `{ id, role, email }`, throws if role isn't allowed. Used by the **staff**-side Lambdas above.
@@ -1241,4 +1255,180 @@ Drove the actual dev server with a Playwright script (no project `run` skill exi
 
 ### Files
 `src/shared/LoginPage.jsx` (new); `src/App.jsx` (root section rewrite, `/staff` dispatcher, new `/staff/registration` route, guard redirect targets); `src/registration-dashboard/PlatformAdminDashboard.jsx` (Registration Dashboard link repointed); `src/command-dashboard/ContractorLoginPage.jsx`, `src/registration-dashboard/StaffLoginPage.jsx` (deleted); `TESTING_GUIDE.md`/`TESTING_GUIDE.docx` (updated to match, same pass); `backend/functions/{shared,add-technician,complete-technician-setup,resend-technician-setup,update-technician}/shared/technicianSetupTokens.js` (domain fix, unrelated pre-existing change committed alongside).
+
+---
+
+## 33. Pre-handoff audit and cleanup: mock data, dead UI, Approvals Queue reassessment (2026-08-22)
+
+### Why
+Both web apps were reported as close to feature-complete and about to go to the project owner (Bob) for review. Before that, a full audit was requested: sweep the entire system for leftover mock/hardcoded data (even in places untouched by recent work), reassess whether the Approvals Queue panel reflects a real workflow or should be removed, check Data Archive & Export and Team & Access for exact completeness, and find every dead/non-functional control. Investigated first (three parallel read-only passes covering the full Registration/Staff surface and all 11 Contractor Command Dashboard panels), reported findings and a prioritized plan, then built the quick/safe (P0) portion once approved — hardcoded-data removal, dead-control cleanup, an Approvals Queue safety fix, and two documentation corrections. Two items were explicitly deferred as real decisions/builds, not cleanup: the Data Export file-delivery pipeline and the Team & Access multi-role system (both already correctly scoped-and-deferred in §28) were left as-is.
+
+### 33.1 Mock/hardcoded data found and removed
+Registration Dashboard step components had several hardcoded fallback values that displayed as if they were a contractor's real saved data whenever the real column was unset (the normal state for most fields) — in three cases the fake value could have been persisted into a live record if staff clicked "Add"/Save without noticing:
+- `Step5ComplianceLicensing.jsx` — 3 fake "additional licenses" (`RC-88214`/`PL-33921`/`CAPS-901`) now default to `[]`; 8 hardcoded fallback dates/dollar amounts (license dates, GL coverage/aggregate/expiration, WC expiration, bond amount/expiration) now default to blank.
+- `Step6OperationsWorkforce.jsx` — 9 fake service names now default to `[]`.
+- `Step7SecureFinancials.jsx` — payment-methods fallback (all 4 pre-checked) now defaults to `[]`; masked-field placeholders (`••••••••0277`, `••••••••1212`, `acct_1P••••••••`, `Visa •••• 4444` — fake *specific* digits/brand) now use generic dot patterns with no fabricated content; `backup_card_expiration` fallback removed.
+- `Step2BusinessIdentity.jsx` — EIN masked-display fallback (`XX-XXX7842`, a fabricated specific ending) replaced with a generic `XX-XXXXXXX` pattern.
+- `Step8InternalSystemSettings.jsx` — fallbacks for `contractor_id_public` (`LUXE-SRQ-001`), `onboarded_by_name` (`S. Martinez (onboarding specialist)` — a fabricated staff name with no basis in `fl_users`), `onboarded_at`, `next_credential_review` all replaced with a real blank/`—` state.
+- `Step4KeyContacts.jsx` — new-contact creation had `contractor_id: data.contractor?.id || 'contr-luxe-001'`, a real data-corruption risk (a fake contractor_id could be written to a live record if `data.contractor.id` were ever unexpectedly missing). Fallback removed; now `undefined` if genuinely missing, failing loudly instead of silently misattributing a contact.
+
+Contractor Command Dashboard:
+- `dashboardData.js` (9 fake technicians, e.g. "Tyler Brooks," "Miguel Santos") was still live-wired via `ContractorCommandDashboard.jsx`'s `displayTechs` into four places during the initial-load race window before `list-technicians` resolved: the "ACTIVE TECHNICIANS" KPI, Panel 1's "Reassign tech…" dropdown, Panel 3's title count, and Panel 8's technician report. `displayTechs` now falls back to `[] ` like `displayVehicles`/`displayCustomers` already did, and `dashboardData.js` was deleted outright — nothing imports it anymore, making the file tree's last mock artifact actually gone, not just narrowed.
+- A site-wide "MFA verified · session 07:42" header pill and a "MFA Verified (TOTP)" / "IDLE TIMEOUT: 20 minutes" security-banner claim were static JSX text with zero backing implementation anywhere in the frontend (confirmed via grep — no MFA/TOTP/idle-timeout code exists for the contractor dashboard, unlike the Registration Dashboard's real, `system_settings`-backed session-policy fields, §1's Step 1). Both removed; the banner now shows only the real "SIGNED IN AS" and "AUTH LEVEL" fields.
+
+### 33.2 Approvals Queue — reassessed, kept
+The project owner suspected this panel didn't reflect a real workflow (their understanding: technicians create and send estimates directly to the customer from the mobile app, full stop). Investigated against three independent sources rather than taking either the recollection or the existing code at face value: the original `FieldLoop_Contractor_Command_Dashboard_SPEC.md` §13b permission matrix (Owner/Admin = "✓ Approve" for Estimates & Approvals, not Create/Full), the 8-beat job spine (§11.3, Beat 6 ends at customer-signed, driven by technician + customer only), and the schema itself (`estimates_and_change_orders.status` CHECK has `approved`/`rejected` as states distinct from and after `signed`, plus dedicated `owner_approved_by`/`owner_approved_ts` columns referencing `contractor_users` — a schema wouldn't need a separate post-signature approval state and a dedicated approver-identity column if the customer's mobile signature were meant to be final). Live code confirmed the panel does exactly this and nothing more (already corrected once for this exact reason, §23.3) — no create/edit/send capability exists anywhere in `EstimateCard`, and Approve/Reject render only when `estimate.status === 'signed'`.
+
+**Recommendation given: keep.** This is a real, deliberate financial gate between "customer signed in the field" and "billed" — the owner/admin bears the Stripe Connect/platform-fee liability, so a check before money moves is a genuine business control, not a leftover step from the round-1 mistake §23 already tore down.
+
+**One real gap found and fixed**: Reject had no confirmation step — a single misclick immediately rejected a customer-signed estimate with no undo. `EstimateCard` now shows a `ConfirmModal` (reusing the same component already used for "Deactivate technician") before calling `onReject`.
+
+### 33.3 Dead/non-functional controls removed
+Seven controls were either wired to a `flash('... is a mock action.')` toast with no real backend, or had no `onClick` handler at all:
+- Panel 1: "Swap vehicle," "Text customer" (both self-admitted mock actions on every job card) — removed.
+- Panel 3: "Send invite link" (redundant with the already-real Add/Resend technician setup-link flow), "Export roster" (no export capability exists) — removed.
+- Panel 7: "Export CSV" (no `onClick` at all) — removed.
+- Footer: "Export dashboard view," "Contact support" (neither had a handler; no verified real support email exists to wire the latter to, so it was removed rather than pointed at an unconfirmed address) — removed. The footer's "✓ All caught up" pill is intentionally `disabled` (a status indicator, not a broken control) and was left as-is.
+
+### 33.4 Documentation corrections
+- This document's own §1 still described the Contractor Command Dashboard as "only login/identity real, everything else mock" — stale since §10 through §31 rebuilt every panel for real; fixed to reflect current state.
+- A code comment in `ContractorCommandDashboard.jsx` cited "HANDOFF.md §30" for the Live Feed panel; the real section is §31 (§30 is the unrelated `access_audit_log` fix). Fixed.
+- Step 1's RBAC matrix (`Step1AccessSecurity.jsx`) claimed Onboarding Specialist and Finance/Reconciliation get "◐ Last 4 only" on Owner PII (SSN/DOB) and Bank & Routing — but `reveal-field/index.js`'s own `checkFieldReveal()` grants Onboarding full reveal on both, and Finance full reveal on Bank & Routing specifically (there is no partial-reveal capability anywhere in the system — a "reveal" is always all-or-nothing). Confirmed with the project owner: fix the copy, not the access. Matrix now reads "✓ Full (Revealable)" for those two cells; Finance's Owner PII cell correctly stays "✕ No" (finance is genuinely not in that field's allowlist) and Support/Jenex Developer rows were left unchanged (not flagged, and consistent with `requireRole`/`checkFieldReveal`'s actual allowlists).
+
+### 33.5 Explicitly not built this pass (real decisions/builds, not cleanup)
+Both already correctly scoped-and-deferred in §28, re-confirmed rather than silently left stale:
+- **Data Archive & Export's file-generation/delivery pipeline** — still real request-tracking only (`create-export-request` inserts a `queued` row and stops). Needs an async worker (none exists in this Lambda-only synchronous backend), real ZIP/CSV/PDF generation, and S3 signed-URL delivery — a genuine backend build, not touched this pass.
+- **Team & Access's full multi-role system** — still single-role (`owner_admin`) only, no invite flow, no per-role permission gating. Two real decisions (role set, invite mechanism) still needed from the project owner before this can be built, per §28.4a's existing reconnaissance.
+
+### What was tested
+Real browser (Playwright): confirmed the fake MFA/session banner text is gone from the contractor dashboard header and security banner; confirmed all 7 removed buttons no longer render; confirmed the Reject confirmation modal renders on click (`"Reject this estimate?"`); confirmed the Registration Dashboard's Step 1 RBAC matrix shows the corrected "Full (Revealable)" cells for Onboarding/Finance after loading a real contractor record; confirmed zero new console errors after a full page reload. `npm run lint` and `npm run build` both clean throughout.
+
+### Files
+`src/command-dashboard/ContractorCommandDashboard.jsx` (fake MFA/session banner removed, `dashboardData` import and `mockTechnicians` fallback removed, 7 dead buttons removed, `EstimateCard` Reject confirmation added, stale `§30` comment fixed to `§31`); `src/command-dashboard/dashboardData.js` (deleted); `src/registration-dashboard/steps/Step1AccessSecurity.jsx` (RBAC matrix copy corrected); `src/registration-dashboard/steps/Step2BusinessIdentity.jsx`, `Step4KeyContacts.jsx`, `Step5ComplianceLicensing.jsx`, `Step6OperationsWorkforce.jsx`, `Step7SecureFinancials.jsx`, `Step8InternalSystemSettings.jsx` (hardcoded fallback data removed); this file (`§1` and this `§33` section).
+
+---
+
+## 34. Team & Access invite flow (single-role) + real Data Export pipeline (2026-08-22)
+
+### Team & Access — built single-role, not multi-role
+§28.4a's two prerequisite decisions were made, then the scope was deliberately pulled back mid-build: **stick to a single admin role for now** (`contractor_users.role` stays `owner_admin`-only — the CHECK constraint 006 set is unchanged). "Admin" isn't one specific person — it can be Bob, the Jenex team, or anyone else holding that one role; what got built is a way to *invite more owner_admin users*, not a way to grant different roles. The original spec's full `dispatcher`/`bookkeeper`/`field_lead` permission matrix (§13b) remains real, deferred future work — build it when it's actually needed, not speculatively.
+
+**What was built**: a one-time setup-link invite flow mirroring the technician onboarding pattern (§18) exactly, adapted for email/dashboard login instead of phone/mobile:
+- `backend/sql/015_contractor_users_roles.sql` — adds `contractor_users.is_active` (soft-delete, mirrors `technicians.is_active`), `contractor_users.password_changed` (setup-completion tracking, existing rows default `true`), and a new `team_setup_tokens` table (same shape as `technician_setup_tokens`). Deliberately does **not** touch the `role` CHECK constraint — that stays exactly as 006 left it.
+- New Lambdas, all restricted to `INVITABLE_ROLES = ['owner_admin']` / `VALID_ROLES = ['owner_admin']` (single value, not an open set): `invite-team-member`, `complete-team-setup` (unauthenticated, token-based, mirrors `complete-technician-setup`), `resend-team-invite`, `update-team-member` (role-confirm only in practice, since there's only one role to set), `remove-team-member` (soft-delete + Auth ban, mirrors `deactivate-technician`).
+- New `backend/functions/shared/teamSetupTokens.js` (link-only, no short-code — that existed for the technician mobile app's in-app entry, no equivalent here).
+- Frontend: `src/team-setup/TeamSetupPage.jsx` (+ `/team-setup` route), Panel 10 rebuilt with real Invite/Resend/Remove actions gated to `owner_admin`. The role dropdown in the invite/edit-role modals shows exactly one option ("Owner / Admin") — not hidden, since a visible single choice is more honest than removing the field and hardcoding it invisibly.
+
+**Known loose end, flagged rather than silently left**: 14 existing read-endpoint Lambdas (`list-jobs`, `list-estimates`, `list-invoices`, `list-customers`, `get-job-file`, `list-live-feed`, etc.) had their role-allowlists briefly extended to include `dispatcher`/`bookkeeper`/`field_lead` before the scope pulled back to single-role, and a corresponding `usePermissions.js` frontend hook was built with per-role capability logic for those same non-existent roles. **This is currently harmless, not a security gap** — the `role` CHECK constraint never actually allows those values to exist in `contractor_users`, so those code branches are unreachable dead code, not a live bypass. It was left as-is rather than reverted, since unwinding it is itself nontrivial work and the project owner's direction was explicitly to stop building further, not to do additional cleanup surgery. Worth a real revert pass whenever multi-role is picked back up for real (or just before this ships to production, if the loose end bothers whoever reviews it next) — search for `dispatcher`, `bookkeeper`, `field_lead` across `backend/functions/*/index.js` and `src/command-dashboard/usePermissions.js` to find every spot.
+
+### Data Archive & Export — real file-generation pipeline, built
+Per the project owner's go-ahead, the file-generation/delivery pipeline flagged as deferred in §28.4/§33.5 was built for real:
+- New S3 bucket `fieldloop-data-exports` (encrypted, public access blocked, 3-day lifecycle expiry) and a new inline IAM policy on `fieldloop-lambda-execution-role` scoped to `s3:PutObject`/`s3:GetObject` on that bucket only.
+- New `process-export-queue` Lambda, invoked every 2 minutes by a new EventBridge scheduled rule (`fieldloop-process-export-queue-schedule`) — chosen over SQS/Step Functions since the real scale here is a handful of requests, not a queue needing backpressure/retry semantics. Picks up `queued` rows, generates a real file per `export_type`/`output_format` (reusing the exact join patterns `list-jobs`/`list-invoices`/`list-estimates` already use), uploads to S3, and flips the row to `ready` or `failed`. New dependencies: `csv-stringify`, `archiver` (ZIP); reuses the already-proven `pdf-lib` (same library `export-contractor-pdf` uses).
+- **A real bug caught before it shipped**: `fieldloop-lambda-execution-role`'s `MaxSessionDuration` is 3600s (1 hour, confirmed live) — a presigned S3 URL signed with Lambda's own temporary credentials can never actually stay valid for the intended 72-hour window no matter what `expiresIn` is passed to `getSignedUrl`, since S3 rejects it once the underlying signing session itself expires, well before 72 hours. Fixed by storing the S3 *key* in `data_export_requests.download_url_ref` (not a URL — same `*_ref`-pointer idiom this project already uses for encrypted secrets) and adding a new `get-export-download-url` Lambda that mints a fresh, short-lived (15 min) signed URL on every actual download click.
+- **`single_job` and `media_only` export types cannot be fulfilled and are marked `failed`, not left stuck at `queued`**: `single_job` has no real gap to fill from — `create-export-request`'s contract never accepted or stored a `job_id` to know *which* job, a real pre-existing gap surfaced while building this, not something worked around. `media_only` depends on the mobile app's own S3 bucket, which this repo has never had access to or confirmed the identity of (`NEW_MOBILE_TEAM_HANDOFF.md`). Both are flagged in the frontend's export-type dropdown ("not available yet") rather than silently offered.
+- **A real bug found and fixed during live testing, not code review**: `process-export-queue`'s customer-export builder initially selected a guessed `customers.job_count` column that doesn't exist (verified live) — job count is derived from `jobs` grouped by `customer_id`, the same computation `list-customers/index.js` already does. Fixed to match that real pattern exactly. Caught by actually running the pipeline against a live test contractor (a `jobs`/CSV request produced a real 5.9KB file; the same test also confirmed `media_only` correctly resolves to `failed`), not by reading the code.
+- Frontend: Panel 9's history table gets a real "Download" button once `status === 'ready'`, calling `get-export-download-url` and opening the fresh signed link — the "Delivered to {email} once ready" copy (a promise the old pipeline could never keep) is now accurate.
+
+### What was tested
+`jobs`/CSV request end-to-end against the real test contractor (`pw-contractor-…`): confirmed a real file landed in S3 and the row transitioned `queued → ready` with real `file_size_bytes`/`expires_at`. `media_only` request confirmed transitions to `failed`, not stuck at `queued`. Team & Access invite/setup/remove flow was built and deployed but was **not yet live-tested end-to-end as of this section's original writing** — blocked on `015_contractor_users_roles.sql` being run in the Supabase SQL Editor. **Update (2026-08-24, §36)**: confirmed live via probe-select that the migration has since been applied — `contractor_users.is_active`/`password_changed` and the `team_setup_tokens` table all exist in production now. The Team & Access Lambdas are unblocked; still worth a real end-to-end invite/setup/remove pass through the browser, since that specifically hasn't happened yet.
+
+### Files
+`backend/sql/015_contractor_users_roles.sql` (new — confirmed applied to production as of §36); `backend/functions/invite-team-member/`, `complete-team-setup/`, `resend-team-invite/`, `update-team-member/`, `remove-team-member/`, `process-export-queue/`, `get-export-download-url/` (new Lambdas, all deployed); `backend/functions/shared/teamSetupTokens.js` (new); `backend/functions/shared/contractorAuth.js` (`is_active` check added, propagated to all 30 functions using it); `backend/functions/package-lambda.ps1` (`ValidateSet` updated); `src/team-setup/TeamSetupPage.jsx` (new), `src/App.jsx` (`/team-setup` route); `src/command-dashboard/usePermissions.js` (new); `src/command-dashboard/useContractorAuth.js` (`contractorUserId`/`contractorId`/`isDesignatedAdmin` added to `tenant`); `src/command-dashboard/ContractorCommandDashboard.jsx` (Panel 10 rebuilt, Panel 9 real download button, 5 previously-ungated write actions now permission-gated); `src/shared/services/api.js` (new team/export methods added). AWS: S3 bucket `fieldloop-data-exports`, IAM policy `fieldloop-export-bucket-access` on `fieldloop-lambda-execution-role`, EventBridge rule `fieldloop-process-export-queue-schedule`, 7 new API Gateway routes under `/team/*` and `/export-requests/download-url`.
+
+---
+
+## 35. Knowledge Base — second content wave: all 4 launch trades imported, pending Bob's review (2026-08-24)
+
+Bob delivered real content for all 4 launch trades (`Roofing_Metal_Shingle_Asphalt_5000_Master.csv`, `Insulation_SprayFoam_Contractor_2000_Master.csv`, `Concrete_Pavers_Contractor_5000_Master.csv`, `General_Contractor_Remodeling_5000_Master.csv` — 17,000 raw rows combined) in a materially different CSV shape from the original 500-fact Concrete sample (§22), so a new import pipeline was built rather than reusing `import-kb-entries.mjs` as-is. Full field-mapping decisions were confirmed with Bob first (`Prem Knowledge Base Questions 08_21_20.md`, answering `Fieldloop Docs\FieldLoop_KB_New_Trade_Content_Review.md`) before any code was written — see that Q&A doc for the client-facing questions/answers this section implements.
+
+### 35.1 The CSV shape and what Bob confirmed
+
+Columns: `Question, Question_Variations, Answer_OnSite_Format, Category, SubCategory, Code_Reference` — no `fact_title`/`fact`/`verify_locally` at all, so running the original importer unmodified would reject every row. Each file is a uniform 10 Category × 10 SubCategory grid (100 groups/trade), and within each (Category, SubCategory) group, ~5 underlying facts each appear as multiple reworded phrasing variants (10 variants for Roofing/Concrete, 4 for Insulation, mixed for GC) — a deliberate design choice, not noise: Bob generated multiple phrasings per fact ("Jobsite phrasing" / "Client-speak" / "Crew shorthand") specifically to widen how many ways a real technician's spoken question can match it.
+
+Confirmed field mapping: `Answer_OnSite_Format` = the fact (stored + spoken); `Question`/`Question_Variations` = recognition phrasing only, never stored/spoken verbatim; CSV `Category` (10/trade, broad) → DB `subcategory`; CSV `SubCategory` (100/trade, fine) → DB `category` — an intentional naming inversion between the CSV and this schema, confirmed explicitly rather than assumed. `Code_Reference` → `source_type`, and drives `verify_locally`: **any part of the citation naming a real code/standard body (IRC, IPC, IECC, NEC, ACI, ICPI, NCMA, ASTM, OSHA, ANSI, ADA, ICC, NFPA, UL, TCNA, RESNET, PROWAG, ASCE, "local building department/code/amendment/zoning/ordinance", "state licensing board", etc.) → `True`; purely generic citations (manufacturer spec, standard/industry/best practice, building science guidance, engineering judgment, geotechnical practice) → `False`**, confirmed against Bob's exact rule and spot-checked against every distinct `source_type` in the Insulation batch after import — matched with no misclassifications found.
+
+Per Bob's explicit instruction (**not** all 10 variant rows stored as near-duplicates — "we don't need 10 near-duplicate answers sitting in the system, we need one solid answer that a wide range of real-world phrasing can trigger"): one canonical `kb_entries` row per underlying fact, with every variant's `Question` text folded into that one entry's final embedding (so the paraphrase-recognition value survives even though the near-duplicate rows themselves don't get stored).
+
+### 35.2 New pipeline: `backend/scripts/import-kb-qa-variants.mjs`
+
+A separate script from `import-kb-entries.mjs` (kept for the original curated-fact CSV shape), since the processing pipeline is fundamentally different — clustering + LLM title generation, not a direct 1-row-1-fact copy. Flow: embed every raw row's answer → cluster into canonical facts within each (Category,SubCategory) group → generate a short title per canonical fact (`gpt-4o-mini-2024-07-18`, one call per fact) → embed the final canonical text (title + fact + up to 8 distinct recognition questions from the cluster) → resolve/create the trade→subcategory→category hierarchy → insert as `status: 'pending'`.
+
+**Real correctness bug found and fixed before any live import**: the first clustering approach (embedding-similarity threshold, calibrated at 0.85 against one real group where it worked cleanly) **silently merged genuinely different facts** the moment a subcategory had several closely-related-but-numerically-different facts — confirmed directly: "a 3.5in batt → R-13 to R-15" and "a 5.5in batt → R-19 to R-21" scored well above 0.85 against each other (both are "batt R-value by wall depth"), and would have produced one canonical entry carrying only one of the two correct numbers. This is a real answer-correctness risk, not a tidiness one. Root-caused by inspecting the merged cluster's actual rows rather than trusting the histogram. **Fixed** by abandoning embedding-threshold clustering as the primary signal: the dataset's real structure is `<templated lead-in phrase> + <core fact content>`, and the core content is byte-identical across every true phrasing variant (confirmed across Roofing/Insulation/GC samples) — so clustering instead compares each pair's **longest common suffix relative to each string's own length** (≥70% of the shorter string, ≥30 chars absolute), which correctly separates numerically-different-but-topically-similar facts while still merging true phrasing variants regardless of answer length. Embedding similarity is kept only as a post-hoc safety check (flags, doesn't block, any suffix-matched cluster with surprisingly low average similarity — one such warning fired during the real Insulation run and held up as legitimate on inspection).
+
+A **fixed-length version of the suffix approach was tried first and also failed**, for a related reason: a 90-character window (sized against a long Roofing example) overflowed into the lead-in for shorter facts (~79 chars of real content), and since different lead-ins have different lengths, the window captured a different amount of leftover lead-in per row — splitting one true 4-row cluster into 4 false singletons. This is why the final version compares suffixes length-adaptively rather than with any fixed window.
+
+Two smaller bugs also hit and fixed during the real runs: a batched title-generation prompt ("write 20 titles, return them as a JSON array") once returned 21 titles with no reliable way to know which input the extra one belonged to — switched to one LLM call per fact (concurrency-limited to 8 in flight) so there's no batch-alignment ambiguity at all. And a duplicate `fact_title` within the same category (two different facts, same GPT-generated title) hit the DB's real unique index on the very first live insert attempt — fixed with an automatic counter-suffix pass after title generation, plus a hard pre-insert assertion that refuses to write anything if any collision remains, rather than fail partway through a chunked insert.
+
+### 35.3 Results, per trade
+
+| Trade | Raw rows | Canonical facts inserted | Cluster sizes seen |
+|---|---|---|---|
+| Insulation | 2,000 | 564 | 1, 2, 3, 4 |
+| Roofing | 5,000 | 757 | 2, 3, 5, 7, 10 |
+| Concrete & Pavers | 5,000 | 508 | 3, 5, 7, 10 |
+| General Contractor | 5,000 | 513 | 2, 4, 6, 10 |
+
+All inserted as `status: 'pending'` — **not live for any technician or contractor search yet** (`match_kb_entries`/`search-kb-entries` only ever return `status = 'approved'` rows). Concrete & Pavers' original 500 hand-curated facts (§22) are untouched and remain `approved`; the new 508 landed under new, distinct subcategories/categories with zero collision.
+
+### 35.4 Verification performed (before any approval)
+
+Since this content isn't approved yet, verification used a direct pgvector query against `kb_entries` (`status = 'pending'`) rather than the live Lambda (which would correctly return nothing for pending content):
+- One spot-check question per trade returned the correct, clearly relevant fact at 0.51–0.81 cosine similarity.
+- The same 4 questions asked against a *different* trade's pending content scored only 0.32–0.44, with obviously unrelated top matches — trade isolation holds even pre-approval, same result shape as the §22.4 partitioning verification.
+- Aggregate counts confirmed exactly (2,342 new pending rows = 564+757+508+513; grand total 2,842 including the pre-existing 500 approved).
+
+### 35.5 Review sample generated for Bob (`backend/scripts/generate-review-sample.mjs`)
+
+Per Bob's own review-workflow answer (a structured sample, not eyes-on-every-row, and not a random skim): 2–3 rows per CSV SubCategory across all 400 (100/trade × 4 trades), as a CSV with a blank `Bobs_Notes` column. **Real bug hit and fixed while building this**: the first version silently returned only 1,000 of 2,342 pending rows and completely dropped 2 of the 4 trades from the sample — Supabase/PostgREST's default 1,000-row cap per request, not something this repo's other scripts had hit before at this row count. Fixed by paginating with `.range()` until a page comes back short of the page size. Final sample: 1,200 rows (400 groups × 3), verified as exactly 300 per trade.
+
+**Status: sample sent to the user, who is forwarding it to Bob.** Nothing gets approved (flipped from `pending` to `approved` via `approve-kb-entries.mjs`, per trade) until his review comes back — a bad review of one trade/section doesn't need to block the others.
+
+### Files
+`backend/scripts/import-kb-qa-variants.mjs` (new); `backend/scripts/generate-review-sample.mjs` (new); `Fieldloop Docs\FieldLoop_KB_New_Trade_Content_Review.md`/`.docx` (new — the questions sent to Bob); `Prem Knowledge Base Questions 08_21_20.md` (Bob's answers, informed the field-mapping and clustering decisions above, not itself part of this repo).
+
+---
+
+## 36. Registration Dashboard: fixed broken saves, tab-switch remount, and validation gaps; committed and deployed everything pending (2026-08-24)
+
+### Why
+Reported as critical bugs: switching browser tabs and back fully reset the Registration Dashboard (lost scroll position, flicker, re-fetch), values typed into the Business Identity panel vanished across a tab switch, and most fields had no real format validation (the reported example: SSN last-4 accepted arbitrary-length non-numeric input). Investigated first (root-caused all three, plus audited every field's validation coverage), reported findings, then implemented once approved.
+
+### 36.1 Root causes found (not just symptoms)
+- **The dashboard was already mid-repair when this pass started**: an earlier, uncommitted session had already added `validateStep()` and a sessionStorage draft-persist effect to `RegistrationDashboard.jsx`, but in the process deleted the `flashAudit`/`flashTimeoutRef` state backing `triggerAuditLoggedIndicator()` without removing the function itself — so every save/reveal/activate/export/terminate action threw a `ReferenceError` right after the real operation succeeded, caught by the surrounding `try/catch` and shown as a confusing error banner. In `handleSaveAndContinue` specifically, the throw landed *before* the step-advance logic, so "Save & Continue" saved to the server but never actually moved to the next step — very likely the dominant cause of what was being perceived as "broken," distinct from the three reported symptoms.
+- **Tab-switch remount**: `useStaffAuth.js`/`useContractorAuth.js`'s `onAuthStateChange` callback unconditionally set `loading` back to `true` on *every* Supabase auth event, including the background token-refresh Supabase's client fires on tab refocus (it listens for the browser's own `visibilitychange` event). Since `StaffRegistrationSection`/`RootSection` (`App.jsx`) render `null` while `loading`, this unmounted and remounted the whole dashboard tree on a tab switch — not a browser reload, but the same visible symptoms (scroll lost, flicker, re-fetch on remount).
+- **Business Identity data loss**: Step2/Step3/Step7's masked/PII field handlers (`handleEinChange`, `handlePiiChange`, `handleVaultChange`) mutated the `revealedValues` state object in place (`revealedValues[columnName] = val`) instead of calling a setter. The draft-persist `useEffect` depends on `revealedValues` by reference — mutating it in place meant `Object.is` never saw a change, so the effect never re-fired, and the newly typed EIN/SSN/DOB/routing/account/Stripe value was never written to the sessionStorage cache. When the tab-switch remount (above) then restored from that stale cache, the typed value was gone. Non-masked fields (legal name, phone, address, etc.) went through `onChange → setContractorData` correctly and were never actually affected — this bug was specific to the "REVEAL/HIDE" fields, EIN being the one most likely to have been the field actually tested.
+- **Validation**: real regex checks existed in `validateStep()` (added in the same earlier uncommitted session) but only ran at Save/Continue/Activate time — every `<input>` across all 8 steps was a bare `type="text"`/`type="number"` with no `maxLength`/`pattern`/`inputMode`, so arbitrary input was accepted as-you-type. Server-side, `save-contractor-draft` did zero format validation (by design — drafts tolerate partial data) and `activate-contractor`'s `validate()` only checked *presence* of each secret ref, never format, so a direct API call could reach `activated` with a malformed EIN/SSN/routing number.
+
+### 36.2 What was fixed
+- Removed the dead `triggerAuditLoggedIndicator()` and its 7 call sites (no UI ever rendered `flashAudit` — confirmed dead, not restored).
+- `useStaffAuth.js`/`useContractorAuth.js`: `loading` now only gates the *first* session check, not every subsequent `onAuthStateChange` event.
+- Step2/3/7: replaced the in-place `revealedValues` mutation with a proper `onRevealedValueChange` setter passed down from `RegistrationDashboard.jsx`.
+- Added client-side format constraints (`maxLength`/`inputMode`/digit-filtering) to every fixed-format field: SSN last-4, EIN, routing/account numbers, ZIPs, phone numbers, plus `min`/`max` bounds on numeric fields (ownership %, technician count, service radius, risk score, year established, coverage/bond amounts, password minimum length).
+- Closed the server-side gap in `activate-contractor`: now decrypts and format-checks EIN/SSN/routing/account/Stripe ID (not just presence) before allowing activation, and added the missing Account Type and Services Offered presence checks (previously client-only or missing entirely).
+- Fixed a display/data mismatch found during a follow-up validation audit: Business Structure, Account Type, and Bonded Status `<select>` fields showed a default-looking value (`?? 'llc'`-style fallback, or a boolean-coerced `'no'`) that was never actually written to state — so the dropdown looked filled in but `validateStep()`/the server would still flag it missing. Business Structure/Account Type now backfill the real default into state as soon as a contractor loads (`withFieldDefaults`); Bonded Status now shows a genuine empty placeholder instead of a fake-looking "No Bond Required" default.
+- Step 1's Password Minimum Length fired an unvalidated live save to `system_settings` on every keystroke (no debounce, no bound); now clamps to [8, 64] and commits on blur, with the same bound enforced server-side in `save-system-settings` (verified live post-deploy: `POST /settings` with `password_min_length: 3` now returns `400` and leaves the setting unchanged).
+- Fixed a stale `list-team/index.js` comment (pre-existing, unrelated to this bug-fix pass but caught while preparing everything for commit) that incorrectly claimed multi-role support already existed — `update-team-member`'s own `VALID_ROLES` and the untouched CHECK constraint (§34) confirm it doesn't yet.
+
+### 36.3 What was tested (real, live — Playwright against the dev server and the real deployed backend, not just code review)
+- Full create-contractor → Step 2 → Step 3 flow against the real Lambda/Supabase stack: confirmed "Save & Continue" actually advances steps with no `ReferenceError` text anywhere (previously would silently fail to advance).
+- SSN last-4: typing `"abc12345678"` yields `"1234"` in the field.
+- Masked-field persistence: revealed the EIN field, typed a new value, read `sessionStorage`'s `fieldloop_draft_<id>` directly — confirmed `revealedValues.ein_ref` now matches the typed value (previously stayed stale/undefined due to the mutation bug).
+- Services Offered: Save & Continue blocked with none listed, cleared once one was added.
+- Bonded Status: confirmed the select's live value is genuinely `""` (not `"no"`) before any interaction, and the required-error correctly fires until an explicit choice is made.
+- Business Structure/Account Type: confirmed a brand-new contractor advances past Step 2/7 without the dropdown ever being touched.
+- Password Minimum Length: typed `"3"`, confirmed it clamps to `"8"` on blur (fixed a flicker-back-to-stale-value bug caught in this same pass — the pending value now stays shown through the async save round-trip instead of reverting to null), confirmed the clamped value survives a full page reload, and confirmed the same bound now rejects `password_min_length: 3` server-side (`400`, verified against the live deployed Lambda post-redeploy).
+- `npm run build` and `npx oxlint` clean throughout (one pre-existing, unrelated `no-useless-escape` lint warning in the Step2 website-URL regex, not touched by this pass).
+
+### 36.4 Everything pending got committed, pushed, and (where needed) deployed
+Beyond this pass's own fixes, the working tree had a substantial backlog of already-finished-but-uncommitted work from prior sessions — §34's Team & Access invite flow and Data Export pipeline, the KB bulk importer/review-sample scripts (§35), and `dashboardData.js`'s deletion (§33) — all already described as done in this document but never actually committed to git. Organized into three commits (Registration Dashboard fixes; Team & Access + Data Export + dashboard wiring; KB scripts) and pushed to `fleet-and-customers`.
+
+**Deployment gap found and closed**: pushing to git does not deploy Lambda code — that's always a separate manual step in this project (see Commands in `CLAUDE.md`). Checking AWS directly (`aws lambda get-function`) confirmed the 7 new Team & Access/Export Lambdas and the `contractorAuth.js` `is_active` propagation across ~40 functions were already deployed on 2026-08-22, matching §34 — that part was already live. `activate-contractor` and `save-system-settings`, however, still showed a `2026-07-28` `LastModified` — this pass's new server-side validation had never actually been deployed. Both were packaged and deployed (`package-lambda.ps1` → `aws lambda update-function-code`) and verified live against the real API Gateway endpoint (§36.3's password-bound check).
+
+**Migration 015 confirmed applied**: §34 left this as an open question ("confirmed live via probe-select... that it had not yet been applied"). A fresh probe-select this session confirms `contractor_users.is_active`/`password_changed` and the `team_setup_tokens` table all exist in production now — the Team & Access Lambdas are unblocked, even though a full end-to-end invite/setup/remove browser pass still hasn't happened (see §34's updated note).
+
+**Left deliberately untouched, not a gap**: the `dispatcher`/`bookkeeper`/`field_lead` role-allowlist entries §34 already flagged as unreachable-but-harmless dead code were left as-is — that's an explicitly deferred cleanup, not something this pass was asked to do.
+
+### Files
+`src/registration-dashboard/RegistrationDashboard.jsx`, `useStaffAuth.js`, `steps/Step1..Step8*.jsx` (all 8); `src/command-dashboard/useContractorAuth.js`; `backend/functions/activate-contractor/index.js`, `save-system-settings/index.js` (both redeployed); `backend/functions/list-team/index.js` (comment fix only). Also committed this session (pre-existing, not built in this pass): everything under §34/§35's own Files lines, plus `backend/functions/package-lambda.ps1`, `src/App.jsx`, `src/command-dashboard/ContractorCommandDashboard.jsx`, `src/shared/services/api.js`, `src/shared/styles/global.css`.
 
