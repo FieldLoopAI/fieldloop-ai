@@ -23,7 +23,7 @@ param(
     'list-live-feed',
     'invite-team-member', 'complete-team-setup', 'resend-team-invite',
     'update-team-member', 'remove-team-member', 'process-export-queue',
-    'get-export-download-url'
+    'get-export-download-url', 'cancel-contractor-registration'
   )]
   [string]$FunctionName
 )

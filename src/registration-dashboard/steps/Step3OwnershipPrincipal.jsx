@@ -1,6 +1,7 @@
 // src/components/steps/Step3OwnershipPrincipal.jsx
 import React from 'react';
 import { Lock } from 'lucide-react';
+import { formatPhoneInput } from '../../shared/utils/formatters';
 
 export default function Step3OwnershipPrincipal({ data, onChange, _activeUser, revealedValues, onReveal, onRevealedValueChange, writeAllowed, errors = {} }) {
   const p = data.principal || {};
@@ -157,10 +158,10 @@ export default function Step3OwnershipPrincipal({ data, onChange, _activeUser, r
             type="text" 
             className={`form-input ${errors.personal_mobile ? 'error' : ''}`}
             value={p.personal_mobile ?? ''}
-            onChange={(e) => handleFieldChange('personal_mobile', e.target.value)}
+            onChange={(e) => handleFieldChange('personal_mobile', formatPhoneInput(e.target.value))}
             disabled={!writeAllowed}
             inputMode="tel"
-            maxLength={20}
+            maxLength={14}
             placeholder="(555) 000-0000"
           />
           {errors.personal_mobile && <span className="field-error">{errors.personal_mobile}</span>}

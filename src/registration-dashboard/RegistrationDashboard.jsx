@@ -3,6 +3,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../shared/services/api';
 import { supabase } from '../shared/services/supabaseClient';
+import { formatEinInput } from '../shared/utils/formatters';
 
 import Step1AccessSecurity from './steps/Step1AccessSecurity';
 import Step2BusinessIdentity from './steps/Step2BusinessIdentity';
@@ -107,8 +108,10 @@ export default function RegistrationDashboard({ staffUser }) {
   const [validationErrorsByField, setValidationErrorsByField] = useState({});
   const [successBanner, setSuccessBanner] = useState(null);
 
-  // Flash indicator
   const loadRequestIdRef = useRef(0);
+  // Wraps the active step's rendered fields — used to scroll/focus the
+  // first invalid one after a blocked Save & Continue / Activate.
+  const stepContentRef = useRef(null);
 
   // Session timer (client-side idle-out UX; actual auth enforcement is the
   // Supabase JWT's own expiry, checked server-side by every Lambda)
@@ -179,6 +182,23 @@ export default function RegistrationDashboard({ staffUser }) {
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Every invalid field already gets an `error` class from the step
+  // component's own `errors.<key> ? 'error' : ''` — reuse that instead of
+  // threading a matching `id` through every one of the ~45 fields across 8
+  // step components. Fires whenever a blocked Save & Continue/Activate
+  // populates validationErrorsByField; a no-op once cleared, since no
+  // `.error` element exists in the DOM anymore by then.
+  useEffect(() => {
+    if (Object.keys(validationErrorsByField).length === 0) return;
+    const firstInvalid = stepContentRef.current?.querySelector(
+      '.form-input.error, .form-select.error, .form-textarea.error'
+    );
+    if (firstInvalid) {
+      firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      firstInvalid.focus({ preventScroll: true });
+    }
+  }, [validationErrorsByField]);
 
   // Step2/Step7's <select> fields display a fallback (e.g. "LLC",
   // "Business Checking") whenever the underlying value is missing, so a
@@ -804,6 +824,32 @@ export default function RegistrationDashboard({ staffUser }) {
     }
   };
 
+  // Only ever reachable while contractor_system_meta.status is 'pending' —
+  // the button that calls this is hidden otherwise (Terminate takes over,
+  // see the header area below). A hard delete, unlike Terminate: nothing
+  // about this record is kept afterward.
+  const handleCancelRegistration = async () => {
+    const legalName = contractorData?.contractor?.legal_name || activeContractorId;
+    const confirmed = window.confirm(
+      `Cancel the registration for ${legalName}?\n\n` +
+      `This has never been activated, so cancelling PERMANENTLY DELETES the entire record — every ` +
+      `field filled in so far, and every encrypted secret already stored (EIN, and SSN/DOB/home ` +
+      `address/bank details if entered) — nothing is kept.\n\n` +
+      `This cannot be undone. Continue?`
+    );
+    if (!confirmed) return;
+
+    try {
+      setErrorBanner(null);
+      const res = await api.cancelContractorRegistration(activeContractorId);
+      handleBackToSearch();
+      setSuccessBanner(`Registration for ${legalName} cancelled. ${res.secretsPurged} secret(s) purged.`);
+      setTimeout(() => setSuccessBanner(null), 8000);
+    } catch (e) {
+      setErrorBanner(e.message);
+    }
+  };
+
   const handleSettingsChange = async (newSettings) => {
     try {
       const saved = await api.saveSystemSettings(newSettings);
@@ -910,9 +956,7 @@ export default function RegistrationDashboard({ staffUser }) {
           <Step8InternalSystemSettings
             data={contractorData}
             onChange={handleLocalChange}
-            activeUser={activeUser}
             writeAllowed={writeAllowed}
-            onTerminate={handleTerminateContractor}
             errors={validationErrorsByField}
           />
         );
@@ -1029,7 +1073,8 @@ export default function RegistrationDashboard({ staffUser }) {
                         type="text"
                         className="form-input"
                         value={newContractorEin}
-                        onChange={(e) => setNewContractorEin(e.target.value)}
+                        onChange={(e) => setNewContractorEin(formatEinInput(e.target.value))}
+                        maxLength={10}
                         placeholder="12-3456789"
                       />
                     </div>
@@ -1163,6 +1208,33 @@ export default function RegistrationDashboard({ staffUser }) {
               <span className="step-status-badge">
                 • Onboarding — Step {activeStep} of 8
               </span>
+              {/* Persistent, visible from every step — not buried on Step 8
+                  like it used to be. Cancel (hard delete) only makes sense
+                  before activation; Terminate (soft, keeps the record) only
+                  makes sense after. */}
+              {contractorData.meta?.status === 'pending' ? (
+                canCreateContractor && (
+                  <button
+                    type="button"
+                    className="btn-spec-outline"
+                    style={{ marginLeft: 'auto', borderColor: 'var(--color-danger, #d33)', color: 'var(--color-danger, #d33)' }}
+                    onClick={handleCancelRegistration}
+                  >
+                    Cancel Registration
+                  </button>
+                )
+              ) : (
+                activeUser.role === 'admin' && contractorData.meta?.status !== 'terminated' && (
+                  <button
+                    type="button"
+                    className="btn-spec-outline"
+                    style={{ marginLeft: 'auto', borderColor: 'var(--color-danger, #d33)', color: 'var(--color-danger, #d33)' }}
+                    onClick={handleTerminateContractor}
+                  >
+                    Terminate Contractor
+                  </button>
+                )
+              )}
             </div>
             <div className="contractor-subtitle">
               {contractorData.contractor.physical_city ? `${contractorData.contractor.physical_city}, ${contractorData.contractor.physical_state}` : ''} · {contractorData.operations.primary_trade || 'Trade Services'} · {contractorData.operations.technician_count || 0} technicians
@@ -1375,7 +1447,7 @@ export default function RegistrationDashboard({ staffUser }) {
           </div>
         ) : (
           <>
-            {renderStepComponent()}
+            <div ref={stepContentRef}>{renderStepComponent()}</div>
 
             {/* Action Buttons Footer */}
             {contractorData && (

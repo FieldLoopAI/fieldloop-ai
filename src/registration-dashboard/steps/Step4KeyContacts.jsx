@@ -1,6 +1,7 @@
 // src/components/steps/Step4KeyContacts.jsx
 import React from 'react';
 import { Plus, Trash2 } from 'lucide-react';
+import { formatPhoneInput } from '../../shared/utils/formatters';
 
 export default function Step4KeyContacts({ data, onChange, _activeUser, writeAllowed, errors = {} }) {
   const contacts = data.contacts || [];
@@ -169,10 +170,10 @@ export default function Step4KeyContacts({ data, onChange, _activeUser, writeAll
                   type="text" 
                   className={`form-input ${errors[`contact_${i}_direct_phone`] ? 'error' : ''}`} 
                   value={c.direct_phone || ''}
-                  onChange={(e) => handleContactChange(i, 'direct_phone', e.target.value)}
+                  onChange={(e) => handleContactChange(i, 'direct_phone', formatPhoneInput(e.target.value))}
                   disabled={!writeAllowed}
                   inputMode="tel"
-                  maxLength={20}
+                  maxLength={14}
                   placeholder="(555) 000-0000"
                 />
                 {errors[`contact_${i}_direct_phone`] && <span className="field-error">{errors[`contact_${i}_direct_phone`]}</span>}
@@ -184,10 +185,10 @@ export default function Step4KeyContacts({ data, onChange, _activeUser, writeAll
                   type="text" 
                   className={`form-input ${errors[`contact_${i}_sms_phone`] ? 'error' : ''}`} 
                   value={c.sms_phone || ''}
-                  onChange={(e) => handleContactChange(i, 'sms_phone', e.target.value)}
+                  onChange={(e) => handleContactChange(i, 'sms_phone', formatPhoneInput(e.target.value))}
                   disabled={!writeAllowed}
                   inputMode="tel"
-                  maxLength={20}
+                  maxLength={14}
                   placeholder="(555) 000-0000"
                 />
                 {errors[`contact_${i}_sms_phone`] && <span className="field-error">{errors[`contact_${i}_sms_phone`]}</span>}

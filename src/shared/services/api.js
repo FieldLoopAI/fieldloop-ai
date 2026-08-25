@@ -116,6 +116,14 @@ export const api = {
   terminateContractor: (contractorId) =>
     authFetch('contractors/terminate', { body: { contractorId } }),
 
+  // Hard-deletes a registration that was never activated — the contractor
+  // row, every child row, and every secret actually stored. Only valid
+  // while contractor_system_meta.status is still 'pending'; the server
+  // refuses otherwise. Irreversible, and unlike terminateContractor this
+  // does not keep the record or audit history around afterward.
+  cancelContractorRegistration: (contractorId) =>
+    authFetch('contractors/cancel', { body: { contractorId } }),
+
   getSystemSettings: () => authFetch('settings', { method: 'GET' }),
 
   saveSystemSettings: (settings) =>

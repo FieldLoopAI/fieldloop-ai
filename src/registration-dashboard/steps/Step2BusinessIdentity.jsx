@@ -1,6 +1,7 @@
 // src/components/steps/Step2BusinessIdentity.jsx
 import React from 'react';
 import { Lock } from 'lucide-react';
+import { formatEinInput, formatPhoneInput } from '../../shared/utils/formatters';
 
 export default function Step2BusinessIdentity({ data, onChange, _activeUser, revealedValues, onReveal, onRevealedValueChange, writeAllowed, errors = {} }) {
   const c = data.contractor || {};
@@ -19,13 +20,14 @@ export default function Step2BusinessIdentity({ data, onChange, _activeUser, rev
     ? (revealedValues['ein_ref'] ?? '')
     : "XX-XXXXXXX";
 
-  // EIN format is XX-XXXXXXX or 9 bare digits — strip anything else so the
-  // field can't accumulate arbitrary-length/non-numeric input as-you-type.
+  // Auto-formats to XX-XXXXXXX as the user types (dash inserted after the
+  // 2nd digit), capped at 9 digits — matches validateStep's EIN regex
+  // exactly, so a fully-typed field is always already valid.
   const handleEinChange = (val) => {
     if (!writeAllowed) return;
-    const cleaned = val.replace(/[^\d-]/g, '').slice(0, 10);
-    onRevealedValueChange('ein_ref', cleaned);
-    handleFieldChange('ein_val', cleaned);
+    const formatted = formatEinInput(val);
+    onRevealedValueChange('ein_ref', formatted);
+    handleFieldChange('ein_val', formatted);
   };
 
   return (
@@ -135,10 +137,10 @@ export default function Step2BusinessIdentity({ data, onChange, _activeUser, rev
             type="text" 
             className={`form-input ${errors.business_phone ? 'error' : ''}`}
             value={c.business_phone ?? ''}
-            onChange={(e) => handleFieldChange('business_phone', e.target.value)}
+            onChange={(e) => handleFieldChange('business_phone', formatPhoneInput(e.target.value))}
             disabled={!writeAllowed}
             inputMode="tel"
-            maxLength={20}
+            maxLength={14}
             placeholder="(555) 000-0000"
           />
           {errors.business_phone && <span className="field-error">{errors.business_phone}</span>}
@@ -150,10 +152,10 @@ export default function Step2BusinessIdentity({ data, onChange, _activeUser, rev
             type="text" 
             className={`form-input ${errors.business_sms ? 'error' : ''}`}
             value={c.business_sms ?? ''}
-            onChange={(e) => handleFieldChange('business_sms', e.target.value)}
+            onChange={(e) => handleFieldChange('business_sms', formatPhoneInput(e.target.value))}
             disabled={!writeAllowed}
             inputMode="tel"
-            maxLength={20}
+            maxLength={14}
             placeholder="(555) 000-0000"
           />
           {errors.business_sms && <span className="field-error">{errors.business_sms}</span>}

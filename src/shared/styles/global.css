@@ -1095,3 +1095,116 @@ body {
   transform: translateY(-1px);
 }
 
+/* ---------------------------------------------------------------------
+   Mobile responsiveness (Registration Dashboard). Every rule above this
+   point had zero @media queries backing it — a real gap, confirmed via a
+   375px-wide screenshot showing 250px+ of horizontal overflow and the
+   two-column form grid squeezing fields (EIN, phone) down to icon-width
+   slivers with labels visually colliding. This block targets exactly the
+   layouts that broke, rather than a full ground-up responsive rewrite.
+   --------------------------------------------------------------------- */
+@media (max-width: 640px) {
+  .command-center-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+  }
+
+  .command-header-status {
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    width: 100%;
+  }
+
+  .header-controls {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .main-dashboard-container {
+    padding: 0 0.75rem;
+    margin: 1rem auto;
+  }
+
+  .user-status-card {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+    padding: 1rem;
+  }
+
+  /* The 12-column grid stays, but every span collapses to full width —
+     a col-6 pair (e.g. EIN + Year Established) that used to squeeze two
+     fields into half-width slivers now stacks one per row instead. */
+  .form-grid .col-12,
+  .form-grid .col-8,
+  .form-grid .col-6,
+  .form-grid .col-4,
+  .form-grid .col-3 {
+    grid-column: span 12;
+  }
+
+  .spec-step-card {
+    padding: 1.25rem;
+  }
+
+  .spec-step-header {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .contractor-title-row {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .contractor-title-row h1 {
+    font-size: 1.35rem;
+  }
+
+  .horizontal-stepper {
+    /* Already overflow-x: auto — just make each tab small enough that
+       more of the stepper is visible before scrolling is needed. */
+    padding: 3px;
+  }
+
+  .stepper-item {
+    flex: 0 0 auto;
+    padding: 8px 10px;
+    font-size: 0.76rem;
+  }
+
+  .actions-footer-bar {
+    flex-wrap: wrap;
+  }
+
+  .actions-footer-bar button {
+    flex: 1 1 auto;
+  }
+
+  .masked-input-group {
+    flex-wrap: wrap;
+  }
+
+  .masked-input-group .masked-input-wrapper {
+    flex-basis: 100%;
+  }
+
+  .credentials-page {
+    padding: 1rem 0;
+  }
+
+  .credentials-card {
+    padding: 1.5rem;
+  }
+
+  .credential-row {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .credential-value-group {
+    flex-wrap: wrap;
+  }
+}
+

@@ -1,11 +1,8 @@
 // src/components/steps/Step8InternalSystemSettings.jsx
 import React from 'react';
-import { AlertTriangle } from 'lucide-react';
 
-export default function Step8InternalSystemSettings({ data, onChange, writeAllowed, activeUser, onTerminate, errors = {} }) {
+export default function Step8InternalSystemSettings({ data, onChange, writeAllowed, errors = {} }) {
   const m = data.meta || {};
-  const isTerminated = m.status === 'terminated';
-  const canTerminate = activeUser?.role === 'admin' && !isTerminated;
 
   const handleFieldChange = (field, val) => {
     if (!writeAllowed) return;
@@ -113,31 +110,6 @@ export default function Step8InternalSystemSettings({ data, onChange, writeAllow
           {errors.internal_notes && <span className="field-error">{errors.internal_notes}</span>}
         </div>
       </div>
-
-      {activeUser?.role === 'admin' && (
-        <div className="form-grid" style={{ marginTop: 24, padding: 16, border: '1px solid var(--color-danger, #d33)', borderRadius: 8 }}>
-          <div className="col-12" style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-            <AlertTriangle size={16} color="var(--color-danger, #d33)" />
-            <strong>Danger zone</strong>
-          </div>
-          <div className="col-12" style={{ fontSize: '0.85em', opacity: 0.8, marginBottom: 12 }}>
-            {isTerminated
-              ? 'This contractor is terminated. Their AWS Secrets Manager secrets have been purged.'
-              : 'Terminating a contractor sets their status to "terminated" and permanently deletes their encrypted secrets (EIN, SSN, DOB, home address, bank/Stripe details) from AWS Secrets Manager. The contractor record and audit history are kept. This cannot be undone.'}
-          </div>
-          <div className="col-12">
-            <button
-              type="button"
-              className="btn-spec-outline"
-              style={{ borderColor: 'var(--color-danger, #d33)', color: 'var(--color-danger, #d33)' }}
-              onClick={onTerminate}
-              disabled={!canTerminate}
-            >
-              Terminate Contractor & Purge Secrets
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
