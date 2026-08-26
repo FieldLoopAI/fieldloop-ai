@@ -20,7 +20,9 @@ On the **Contractor Command Dashboard**, two more sections are now real and conf
 
 **Registration Dashboard critical bugs fixed** (§36, 2026-08-24): a dead function was throwing on every save (breaking "Save & Continue" specifically), a tab switch was unmounting/remounting the whole dashboard, masked PII fields (EIN/SSN/DOB/etc.) were losing typed values across that remount, and most fields had no real format validation. All fixed and live-verified, both client- and server-side. This same pass also caught up git with a substantial backlog of already-built-but-uncommitted work (§33/§34/§35) and closed a real deployment gap — `activate-contractor`/`save-system-settings` had new code in the repo that was never actually pushed to the running Lambdas; that's fixed now too.
 
-See **Where things left off** (§9) for the Registration Dashboard's testing history, and §10/§12/§13/§14/§15/§16/§17/§18/§19/§23/§27/§28/§30/§31/§32/§36 for everything found and fixed on the Contractor Command Dashboard side since.
+**Registration Dashboard round 2** (§37–§39, 2026-08-25/26): EIN/phone auto-formatting, scroll-to-first-invalid-field, real mobile responsiveness (there was none), and a new Cancel Registration action (hard-deletes a still-`pending` contractor + its secrets, distinct from the existing soft `terminate-contractor`) now live from a persistent header button on every step (§37). A second, genuinely different data-loss bug was then found and fixed — `physical_state`/`mailing_state`/`license_state` are fixed `character(2)` DB columns, a free-text state input longer than 2 characters silently killed the *entire* containing Business Identity save (Postgres updates are atomic, and nothing in `contractorDraft.js` ever checked a write's `.error`), so the wizard reported success while the database kept nothing; fixed with real `.error` checks plus state dropdowns that make the bad input impossible (§38). Fixing that surfaced one more latent bug in the same shared save path — an empty, untouched Ownership/Compliance/Operations section was unconditionally attempting a database write and failing a NOT NULL constraint on every single save, invisibly, until the new error-checking made it visible; also fixed (§38.3). Operations & Workforce's Business Hours/Saturday Hours/Time Zone also went from unvalidated free text to structured time pickers and a real time-zone dropdown (§39).
+
+See **Where things left off** (§9) for the Registration Dashboard's testing history, and §10/§12/§13/§14/§15/§16/§17/§18/§19/§23/§27/§28/§30/§31/§32/§36/§37/§38/§39 for everything found and fixed on the Contractor Command Dashboard side since.
 
 ---
 
@@ -82,6 +84,10 @@ src/
   shared/services/
     supabaseClient.js                  — browser Supabase client, ANON key only, Auth use only
     api.js                             — fetch wrapper for all Lambda calls (attaches JWT bearer token)
+  shared/utils/
+    formatters.js                      — formatEinInput/formatPhoneInput, shared as-you-type masking (§37.1)
+    usStates.js                        — 50 states + DC, backs the State/Mailing State/License State selects (§38.2)
+    usTimeZones.js                     — the 7 standard US zones, backs Operations & Workforce's Time Zone select (§39.1)
   shared/
     LoginPage.jsx                      — single real Supabase Auth login page for both contractors and staff (§32)
   registration-dashboard/
@@ -137,6 +143,7 @@ Each function is its own deployable folder: `index.js` + its own `shared/` copy 
 | `create-contractor-portal-user` | `fieldloop-create-contractor-portal-user` | `POST /contractors/portal-user` | admin, onboarding | Creates the contractor's real Supabase Auth login + `contractor_users` row |
 | `list-contractors` | `fieldloop-list-contractors` | `POST /contractors/list` | any fl_user | Powers the "Existing Contractors" search tab — `{ id, legal_name, contractor_id_public, is_sandbox }` only, no sensitive fields, `jenex_dev` filtered to `is_sandbox = true` |
 | `terminate-contractor` | `fieldloop-terminate-contractor` | `POST /contractors/terminate` | admin only | §20 — "Terminate + purge secrets": flips `contractor_system_meta.status` to `terminated`, permanently deletes every AWS Secrets Manager secret for that contractor (up to 8: `ein_ref`, `dob_ref`/`ssn_last4_ref`/`home_address_ref`, `routing_number_ref`/`account_number_ref`/`stripe_account_id_ref`/`backup_card_ref`) and nulls their `*_ref` columns. Does **not** delete any DB rows or audit history — a deliberate design choice, see §20. |
+| `cancel-contractor-registration` | `fieldloop-cancel-contractor-registration` | `POST /contractors/cancel` | admin, onboarding | §37.5 — hard-deletes a still-`pending` (never-activated) contractor: the row, every child table, and every secret actually stored. Refuses to run on anything past `pending` — that's what `terminate-contractor` above is for. Distinct operation, not a variant of it. |
 | `get-platform-overview` | `fieldloop-get-platform-overview` | `POST /platform/overview` | admin only | §24 — cross-contractor KPIs: contractor status breakdown (incl. contractors with no `contractor_system_meta` row at all), technician/job counts, real revenue aggregation (honest `$0` until real invoicing exists), compliance expirations, KB content/submission stats |
 | `list-platform-contractors` | `fieldloop-list-platform-contractors` | `POST /platform/contractors` | admin only | §24 — every contractor on the platform with status/trade/usage counts in one call, unlike `list-contractors`' 50-row name-search picker |
 | `list-kb-submissions-admin` | `fieldloop-list-kb-submissions-admin` | `POST /kb/admin/submissions` | admin only | §24 — every contractor's KB submissions (not just one contractor's, unlike `list-my-kb-submissions`), optional status filter |
@@ -1431,4 +1438,91 @@ Beyond this pass's own fixes, the working tree had a substantial backlog of alre
 
 ### Files
 `src/registration-dashboard/RegistrationDashboard.jsx`, `useStaffAuth.js`, `steps/Step1..Step8*.jsx` (all 8); `src/command-dashboard/useContractorAuth.js`; `backend/functions/activate-contractor/index.js`, `save-system-settings/index.js` (both redeployed); `backend/functions/list-team/index.js` (comment fix only). Also committed this session (pre-existing, not built in this pass): everything under §34/§35's own Files lines, plus `backend/functions/package-lambda.ps1`, `src/App.jsx`, `src/command-dashboard/ContractorCommandDashboard.jsx`, `src/shared/services/api.js`, `src/shared/styles/global.css`.
+
+---
+
+## 37. Registration Dashboard round 2: formatting, scroll-to-error, mobile responsiveness, Cancel Registration (2026-08-25)
+
+### Why
+A second, more specific round of reported issues, investigated one at a time with findings shared before any code was written (plan mode): EIN/phone fields accepted arbitrary input with no formatting; no auto-scroll to the first invalid field on a blocked save; a suspicion that typing just Legal Name + EIN on page 1 was writing to the database prematurely; data loss navigating back to a completed panel (see §38 — this turned out to be a real, different bug, not a duplicate of §36's fixes); the dashboard had no mobile layout at all; and Step 8's Danger Zone showed a "terminate contractor" warning even for a contractor that was never activated.
+
+### 37.1 EIN/phone auto-formatting
+New `src/shared/utils/formatters.js` — `formatEinInput`/`formatPhoneInput`, both re-derive the formatted string from the underlying digits on every keystroke (rather than tracking raw/formatted state separately) so backspacing at the end works naturally; the trade-off (same one every common phone/EIN input mask makes) is that a mid-string edit is less clean. Wired into every EIN field — including the landing "New Registration" form's own EIN input, which turned out to be a completely separate, unformatted field from Step 2's reveal-mode one and had been missed in the original validation pass (§36) — and every phone field across the wizard: Step 2 (business/SMS), Step 3 (personal mobile), Step 4 (per-contact direct/SMS).
+
+### 37.2 Scroll to the first invalid field
+Rather than thread a matching `id` through all ~45 fields across 8 step components, reused the `error` CSS class every step component already applies per-field (`errors.<key> ? 'error' : ''`). A new `stepContentRef` wraps the active step's rendered output in `RegistrationDashboard.jsx`; a `useEffect` watching `validationErrorsByField` finds the first `.form-input.error`/`.form-select.error`/`.form-textarea.error` inside it and calls `scrollIntoView({behavior:'smooth', block:'center'})` + `.focus()` whenever a blocked Save & Continue/Activate/Save Draft populates that state. A no-op once cleared, since no `.error` element exists in the DOM by then. Verified live: a deliberately-incomplete Step 2 save scrolls to and focuses Business Phone (the first field still invalid in DOM order) with the page's `scrollY` moving from 0 to a real, non-zero value.
+
+### 37.3 Premature DB write on page 1 — investigated, confirmed intentional
+Typing into the two page-1 fields alone writes nothing — there is no autosave-on-keystroke anywhere in this wizard. The real write happens specifically when "Create Contractor & Continue" is clicked, which calls `create-contractor` and inserts a real row immediately. This is structural, not incidental: every other registration table has a foreign key to `contractors.id`, so a real row has to exist before Step 2 can save anything, and it's also what backs the existing "Existing Contractors" search/resume feature (TESTING_GUIDE.md, Part C) — a paused registration needs *something* in the database to be found again later. Concluded not a bug; the residual concern (an abandoned registration leaving a permanent, incomplete row) was addressed for real via Cancel Registration (§37.5) rather than by deferring the write.
+
+### 37.4 Mobile responsiveness
+`global.css` had zero `@media` queries anywhere, confirmed both by inspection and empirically: a 375px-wide screenshot measured `document.body.scrollWidth` at 626px (251px of real horizontal overflow), with the two-column `.form-grid` squeezing EIN/phone fields down to icon-width slivers and colliding labels ("BUSINESSTEXT / SMS NUMBER PHONE (VOICE)"). Added a single `@media (max-width: 640px)` block: header wraps instead of overflowing, the 5-column `.user-status-card` and 12-column `.form-grid` collapse to a single column, the stepper shrinks its per-tab padding/font, footer action buttons wrap, credentials page/card padding shrinks. Verified after: `document.body.scrollWidth === window.innerWidth` exactly (0px overflow), and a full-page screenshot shows every field at full readable width, single column, nothing cut off.
+
+### 37.5 Cancel Registration (new Lambda) + persistent header action
+Split from Step 8's old "Terminate Contractor" Danger Zone, which showed the same "permanently deletes... cannot be undone" framing for a contractor that had never been activated — confusing during creation, and not the same operation a real termination is.
+
+- **New Lambda `cancel-contractor-registration`** (`POST /contractors/cancel`, `admin`+`onboarding` — same allowlist as who can create a contractor in the first place) hard-deletes a still-`pending` (never-activated) contractor: the `contractors` row, every child table row, and every secret actually stored (the EIN alone is always stored the moment a contractor is created, before any wizard step is filled in; DOB/SSN/home address/bank/Stripe too if the tester got that far). Refuses to run on anything past `pending` — that's what `terminate-contractor` is still for, unchanged, and deliberately not reused or replaced here since it's a genuinely different operation (hard delete vs. soft terminate-and-keep-the-audit-trail).
+- **A real schema fact confirmed live, not assumed**: every child table's `contractor_id` foreign key is `RESTRICT`, not `CASCADE` — a direct delete of the `contractors` row fails with a foreign-key violation until children are deleted first. `cancel-contractor-registration` deletes `contractor_principals`/`contractor_contacts`/`contractor_compliance`/`contractor_operations`/`contractor_financials`/`contractor_system_meta`/`access_audit_log` before the parent row, in that order.
+- **The cancellation's own audit-log entry is written *after* the delete**, with `contractor_id: null` (can't reference a row that's about to stop existing) and the contractor's name/public ID folded into the log text instead — the same non-contractor-scoped-action pattern `save-system-settings` already uses.
+- **Defensive edge case found and handled while using the new endpoint to clean up disposable test data**: a `pending` contractor should never have a `contractor_users` portal-login row (that's only ever created after activation, by `create-contractor-portal-user`) — but one old pre-existing test record somehow had one anyway. Rather than let the whole cancellation fail on that FK, the Lambda now defensively clears any `team_setup_tokens`/`contractor_users` rows for the contractor first if they exist.
+- **Frontend**: a persistent "Cancel Registration" (while `pending`) / "Terminate Contractor" (once active) button now lives in the contractor header area (`contractor-header-area`), visible from every step — not buried on Step 8 like the old Danger Zone, which was removed as redundant now that this exists. Labeled and gated by the contractor's actual status; Cancel is `admin`+`onboarding`, Terminate stays `admin`-only exactly as before.
+
+### 37.6 What was tested
+Real browser (Playwright) against both the dev server and production `app.fieldloopai.com`: EIN/phone formatting confirmed on every wired field; scroll-to-error confirmed via `scrollY` measurement and `document.activeElement` matching the first invalid field; mobile confirmed via a 375px screenshot with 0px overflow before/after comparison; Cancel Registration exercised for real during this session's own test-data cleanup (multiple disposable contractors created during testing were removed via the new endpoint rather than left as orphaned `pending` rows). `npm run build`/`npx oxlint` clean throughout.
+
+### Files
+`src/shared/utils/formatters.js` (new); `src/registration-dashboard/RegistrationDashboard.jsx`, `steps/Step2BusinessIdentity.jsx`, `Step3OwnershipPrincipal.jsx`, `Step4KeyContacts.jsx`, `Step8InternalSystemSettings.jsx`; `src/shared/services/api.js`, `src/shared/styles/global.css`; `backend/functions/cancel-contractor-registration/` (new Lambda, deployed); `backend/functions/package-lambda.ps1` (`ValidateSet` updated). AWS: new API Gateway route `POST /contractors/cancel` + integration + Lambda permission.
+
+---
+
+## 38. Root-caused and fixed: silent Business Identity/Compliance data loss (character(2) state columns + unchecked Supabase errors) (2026-08-26)
+
+### Why
+Reported again after §36/§37 shipped: fill out Business Identity completely, Save & Continue to Ownership, click the real "← Back" button, and the panel comes back almost empty except Legal Business Name. This looked at first like a duplicate of §36's already-fixed bugs (tab-switch remount, masked-field mutation) — it wasn't. Investigated by reproducing live against production with matching realistic data and matching timing (the user's own screenshots showed a ~2m12s gap between steps, read off the session countdown pill — matched via a deliberate 150-second wait in the reproduction script) before concluding anything.
+
+### 38.1 Root cause, proven with a database read that bypassed the Lambda entirely
+`contracts.physical_state`, `mailing_state`, and `contractor_compliance.license_state` are all fixed `character(2)` columns — direct proof via probe-insert:
+```
+contractors.update({ physical_state: 'gdsgdwu', mailing_state: 'oygsdcgiu' })
+→ error 22001: "value too long for type character(2)"
+contractor_compliance.insert({ license_state: 'Florida' })
+→ error 22001: "value too long for type character(2)"
+```
+The State/Mailing State/License State inputs were free text with no length limit anywhere — and Step 5's own placeholder ("e.g. Florida") actively invited the exact input that breaks it.
+
+`backend/functions/shared/contractorDraft.js` bundles every Business Identity field (name, phone, email, both addresses) into **one** `contractors.update()` call. Postgres updates are atomic — when `physical_state` fails its length check, the *entire* statement is rejected, not just that column. And **none of `contractorDraft.js`'s six table writes ever checked their result for an `.error`** (a pattern that predates this session — HANDOFF.md's own §3 already carried an unverified suspicion about exactly this column, never confirmed until now). The Lambda returned `{success:true}` regardless, the wizard showed "Step 2 saved successfully" and advanced — and the database kept none of it.
+
+Confirmed end-to-end against production: same messy field values as the report, `POST /contractors/draft` returns `{"success":true}`, a *direct* service-role database read (bypassing the Lambda) shows every field still `null` except what was set at contractor creation (legal name, EIN ref) — which is exactly what survived in the original report too.
+
+### 38.2 Fix, part 1: make failures visible + eliminate the bad input
+- `contractorDraft.js` (shared by `save-contractor-draft` and `activate-contractor`): every one of the six writes now checks `.error` and throws with the real Postgres message instead of silently continuing.
+- State inputs are now `<select>` dropdowns of real 2-letter codes (new `src/shared/utils/usStates.js`, 50 states + DC) — Step 2 physical/mailing state, Step 5 license state. Makes the bad input impossible to produce rather than just capping its length. Step 5's misleading placeholder is gone with it.
+- `validateStep` gained a regex backstop (`/^[A-Z]{2}$/`) for a record loaded with a pre-existing bad value that a user doesn't happen to re-select.
+
+### 38.3 Fix, part 2: a regression the part-1 fix immediately surfaced
+Live-verifying part 1 against production caught a second, previously-invisible bug in the same pass: every draft save sends the *entire* `contractorData` object regardless of which step is actually active, and `get-contractor` returns `{}` (not `null`) for a section with no row yet. Once `contractorDraft.js` started checking errors, a brand-new contractor's still-empty `principal` section (`{}`, truthy) unconditionally attempted a `contractor_principals` upsert and hit `full_name`'s NOT NULL constraint — on every single save, even one only touching Business Identity, before Step 3 was ever opened. This had *always* been silently happening (masked the same way, by the same missing `.error` check) — it just never mattered until nothing depended on principal/compliance/operations succeeding. Fixed by only attempting a section once it actually has content: `if (principal && Object.keys(principal).length > 0)`, same for `compliance`/`operations`.
+
+### 38.4 What was tested
+The full original reproduction, replayed against production with the exact real "← Back" button and the real ~150-second gap: Save & Continue now advances immediately (`On step immediately after click: Step 3 of 8`), a direct database read confirms every field persisted (including both state dropdowns), and after the full wait plus clicking Back, every field survives — legal name, DBA, business structure, EIN, year, both phones, both addresses, both states, both ZIPs. Also confirmed the two validation backstops directly: state select showing something other than a real code is rejected with "Select a valid 2-letter state from the list."; `contractor_principals`/`compliance`/`operations` upserts no longer fire for an untouched section (confirmed via the same live network-capture + direct-DB-read method).
+
+### Files
+`backend/functions/shared/contractorDraft.js` (+ its two per-function copies in `activate-contractor/shared/` and `save-contractor-draft/shared/`, both redeployed); `src/shared/utils/usStates.js` (new); `src/registration-dashboard/RegistrationDashboard.jsx`, `steps/Step2BusinessIdentity.jsx`, `Step5ComplianceLicensing.jsx`.
+
+---
+
+## 39. Operations & Workforce: structured Business Hours + Time Zone validation (2026-08-26)
+
+### Why
+Business Hours, Saturday Hours, and Time Zone were all free text with nothing stopping arbitrary input — the same class of gap already closed for EIN/phone/state elsewhere in the wizard. Asked to fix specifically these three fields; presented two options (structured pickers vs. regex-validated free text) before building either, since a regex on free text is inherently looser than a real control and the choice changes the stored data shape. Structured pickers were chosen.
+
+### 39.1 What was built
+- **Business Hours (Weekday) / Saturday Hours**: each is now a status `<select>` (Open / Closed / By Appointment Only) plus real `<input type="time">` open/close pickers that only render when Open — a new local `DayHoursEditor` component in `Step6OperationsWorkforce.jsx`, used twice to avoid duplicating the status+time-range logic. Stored inside the existing `business_hours` jsonb column as `{ weekday: {status, open, close}, saturday: {status, open, close} }` — confirmed via probe-insert this needed no schema change, the column already accepts arbitrary jsonb. Neither field is required (matching the previous behavior, no asterisk), but `validateStep` now requires both times when status is Open and that close is strictly after open.
+- **Time Zone**: replaced free text with a dropdown of the 7 standard US zones (IANA identifiers as the stored values, matching the old placeholder's own "America/New_York (ET)" style) — new shared `src/shared/utils/usTimeZones.js`, imported by both the dropdown and a `validateStep` backstop check so the two can't drift apart. Confirmed via probe-insert that `contractor_operations.time_zone` has no length constraint (unlike the state columns, §38) — this was purely about closing off bad input, not a hidden database trap.
+- Old free-text `business_hours` values (from before this change) don't break the new UI — a plain string has no `.status` property, so it renders as "unset" rather than erroring; the old value stays in the database until the record is next saved, at which point it's overwritten by whatever the new structured UI produces.
+
+### 39.2 What was tested
+Real browser against production, each scenario isolated (an earlier chained-script attempt produced false negatives purely from insufficient wait time between actions, corrected by testing patiently): Open status with times left blank → blocked with "Both an open and close time are required."; close time set before open time → blocked with "Close time must be after open time."; valid data (07:00–17:00 weekday, Saturday "By Appointment Only", Eastern Time) → saves and advances, with a direct database read confirming the exact structure `{"weekday":{"open":"07:00","close":"17:00","status":"open"},"saturday":{"status":"appointment_only"}}` and `time_zone:"America/New_York"`.
+
+### Files
+`src/shared/utils/usTimeZones.js` (new); `src/registration-dashboard/steps/Step6OperationsWorkforce.jsx`, `RegistrationDashboard.jsx`.
 

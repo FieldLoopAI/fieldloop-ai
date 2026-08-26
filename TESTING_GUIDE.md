@@ -282,23 +282,28 @@ This is the tool FieldLoop's own staff use to bring a brand-new contracting busi
 **Why it matters:** This is the very first step in turning a prospective contracting business into a paying FieldLoop customer.
 
 **Step by step:**
-1. On the **New Registration** tab, enter a **Legal Business Name** and an **EIN / Tax ID**.
+1. On the **New Registration** tab, enter a **Legal Business Name** and an **EIN / Tax ID** — try typing the EIN as 9 plain digits and watch it format itself as you type.
 2. Click **Create Contractor & Continue**.
 
 **How to check it worked:**
 - [ ] A new contractor record is created, and you're taken straight into a step-by-step onboarding wizard.
 - [ ] Trying to continue with either field left blank is blocked with a clear error message.
+- [ ] The EIN field automatically inserts the dash (e.g. typing `123456789` shows as `12-3456789`).
 
 ### C3. Business Profile & Owner Verification
 
 **Why it matters:** FieldLoop needs to know exactly who it's doing business with — both the company and the real person behind it — the same "know your customer" check any legitimate financial platform performs.
 
 **Step by step:**
-1. Fill in the business's trade name, structure, phone, email, and address, then save and continue.
+1. Fill in the business's trade name, structure, phone, email, and address (including picking the state from the dropdown), then save and continue.
 2. Fill in the owner's name, date of birth, last 4 of their SSN, and contact details, then save and continue.
 
 **How to check it worked:**
 - [ ] Sensitive personal details (date of birth, SSN, home address) save correctly and, once saved, are shown masked with a **Reveal** option — protecting sensitive personal data even from someone looking over your shoulder.
+- [ ] Phone number fields format themselves as you type (e.g. `(555) 123-4567`) and stop accepting digits once a full number is entered.
+- [ ] State is a dropdown of real states, not a free-text box — try leaving it unselected and confirm Save & Continue is blocked with a clear message.
+- [ ] Leaving a required field blank and clicking Save & Continue automatically scrolls you to and highlights the first thing that needs fixing, rather than leaving you to hunt for it.
+- [ ] Navigate away to another step and back (or click the **Back** button) — everything you entered is still there.
 
 ### C4. Key Contacts
 
@@ -312,27 +317,33 @@ This is the tool FieldLoop's own staff use to bring a brand-new contracting busi
 **How to check it worked:**
 - [ ] You can add more than one contact.
 - [ ] FieldLoop won't let you remove the very last contact — a business must always have at least one way to reach it on file.
+- [ ] Each contact's phone fields format themselves as you type, same as the business phone fields.
 
 ### C5. Compliance & Licensing
 
 **Why it matters:** Verifying a contractor's real license, insurance, and legal paperwork protects customers, FieldLoop, and the contractor itself from the risk of unlicensed or uninsured work — this check is core to FieldLoop's credibility as a platform.
 
 **Step by step:**
-1. Fill in the state license, general liability insurance, workers' comp, and W-9 sections.
+1. Fill in the state license (picking the license state from the dropdown), general liability insurance, workers' comp, and W-9 sections.
 2. Add an extra trade license using the text box and **Add License** button.
 
 **How to check it worked:**
 - [ ] The extra license appears as its own removable tag.
+- [ ] License State is a dropdown of real states, same as the address state fields on the previous step.
 
 ### C6. Operations & Workforce
 
 **Why it matters:** Knowing a contractor's trade, coverage area, and crew size upfront helps FieldLoop understand who's actually using the platform and plan support accordingly.
 
 **Step by step:**
-1. Fill in the primary trade, at least one service offered, service area, business hours, and technician/vehicle counts.
+1. Fill in the primary trade and at least one service offered.
+2. For **Business Hours (Weekday)**, choose **Open** and set an opening and closing time; for **Saturday Hours**, try **By Appointment Only** instead.
+3. Pick a **Time Zone** from the dropdown, then fill in the technician/vehicle counts.
 
 **How to check it worked:**
 - [ ] Everything saves and the wizard advances to the next step.
+- [ ] Choosing **Open** for either day reveals real time pickers — try setting a closing time earlier than the opening time and confirm it's blocked with a clear message.
+- [ ] Time Zone is a dropdown of real US time zones, not free text.
 
 ### C7. Banking & Payouts
 
@@ -380,7 +391,21 @@ This is the tool FieldLoop's own staff use to bring a brand-new contracting busi
 **How to check it worked:**
 - [ ] The correct contractor loads back in, exactly where you left off.
 
-### C11. Signing Out
+### C11. Canceling an Unfinished Registration
+
+**Why it matters:** A registration sometimes gets started and abandoned — a prospective contractor changes their mind, or staff started a record by mistake. Leaving that half-finished record sitting in the system forever isn't good practice, so there's a real way to remove it.
+
+**Step by step:**
+1. Start a new registration (or open one you don't need) and confirm it hasn't been activated yet.
+2. Click the red **Cancel Registration** button, visible in the header on every step of the wizard.
+3. Confirm the warning prompt.
+
+**How to check it worked:**
+- [ ] The button reads **Cancel Registration** for a not-yet-activated contractor — a genuinely different, less alarming action than terminating a live one.
+- [ ] After confirming, the record is gone — searching for it under Existing Contractors no longer finds it.
+- [ ] Once you've activated a contractor (C8), the same button changes to **Terminate Contractor** instead, with a stronger warning — that one keeps the record and its history rather than deleting it, since it was once a real customer.
+
+### C12. Signing Out
 
 Click **Sign out**. Confirm you land back on the sign-in page.
 
@@ -390,13 +415,13 @@ Click **Sign out**. Confirm you land back on the sign-in page.
 
 Before wrapping up your review, confirm the following — together, these show FieldLoop working end-to-end across all three experiences and roles:
 
-- [ ] Signed in and out successfully as the Contractor, the Admin, and the Technician.
+- [ ] Signed in and out successfully as both the Contractor and the Admin.
 - [ ] Scheduled a job as the Contractor, both manually and by voice, and saw a scheduling conflict correctly flagged.
 - [ ] Added and managed a technician, a vehicle, and a customer from the Contractor dashboard.
-- [ ] Completed a full field job as the Technician: arrival, photos, a dictated estimate, a change order, a question asked, and marking the job complete.
-- [ ] Watched an estimate/change order go from "sent" to "approved" and confirmed both the technician's and business owner's screens reflected it.
+- [ ] If an Approvals Queue item was available (Part A6), approved or rejected it and confirmed the status updated — otherwise confirmed the honest "nothing waiting" message instead of something broken.
 - [ ] Submitted a Knowledge Base fact as the Contractor and approved it as the Admin, then saw the status update on the Contractor side.
 - [ ] Reviewed the FieldLoop Admin's company-wide Overview, Contractors, Usage, and Revenue tabs and confirmed they matched the real activity you generated.
+- [ ] Registered a new contractor end-to-end (Part C) and confirmed formatted/validated fields (EIN, phone numbers, State/Time Zone dropdowns, Business Hours) behaved correctly, then cancelled a test registration and confirmed it was actually removed.
 - [ ] Understood which pieces are intentionally not live yet (invoicing, online payments, live vehicle tracking, multi-role team permissions) versus what's fully working today.
 
 If everything above checks out, you've experienced FieldLoop the way each of its real users would — and are in a good position to judge whether it matches what the business needs.
