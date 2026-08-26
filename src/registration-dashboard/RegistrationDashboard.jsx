@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../shared/services/api';
 import { supabase } from '../shared/services/supabaseClient';
 import { formatEinInput } from '../shared/utils/formatters';
+import { US_TIME_ZONE_VALUES } from '../shared/utils/usTimeZones';
 
 import Step1AccessSecurity from './steps/Step1AccessSecurity';
 import Step2BusinessIdentity from './steps/Step2BusinessIdentity';
@@ -58,7 +59,7 @@ const VALIDATION_ERROR_STEPS = [
   { step: 3, match: /owner\/principal|owner date of birth|owner ssn|owner personal|owner home address/i },
   { step: 4, match: /primary contact/i },
   { step: 5, match: /license|insurance|compensation|surety bond|w-9/i },
-  { step: 6, match: /primary trade|technician count|service offered/i },
+  { step: 6, match: /primary trade|technician count|service offered|open and close time|close time must be after|time zone/i },
   { step: 7, match: /payout bank|account type|stripe connect|ach platform fee/i },
 ];
 
@@ -610,6 +611,30 @@ export default function RegistrationDashboard({ staffUser }) {
         if (isNaN(rad) || rad <= 0) {
           errors.service_radius_miles = "Service radius must be greater than zero.";
         }
+      }
+
+      // Business/Saturday Hours: neither is required, but once a status is
+      // set, "Open" must have both times filled in and in the right order —
+      // otherwise it's a status claiming to be open with no actual hours.
+      const weekdayHours = ops.business_hours?.weekday;
+      if (weekdayHours?.status === 'open') {
+        if (!weekdayHours.open || !weekdayHours.close) {
+          errors.business_hours_weekday = "Both an open and close time are required.";
+        } else if (weekdayHours.open >= weekdayHours.close) {
+          errors.business_hours_weekday = "Close time must be after open time.";
+        }
+      }
+      const saturdayHours = ops.business_hours?.saturday;
+      if (saturdayHours?.status === 'open') {
+        if (!saturdayHours.open || !saturdayHours.close) {
+          errors.business_hours_saturday = "Both an open and close time are required.";
+        } else if (saturdayHours.open >= saturdayHours.close) {
+          errors.business_hours_saturday = "Close time must be after open time.";
+        }
+      }
+
+      if (ops.time_zone && !US_TIME_ZONE_VALUES.has(ops.time_zone)) {
+        errors.time_zone = "Select a valid time zone from the list.";
       }
     }
 

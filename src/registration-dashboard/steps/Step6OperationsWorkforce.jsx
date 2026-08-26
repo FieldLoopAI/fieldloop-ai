@@ -1,6 +1,53 @@
 // src/components/steps/Step6OperationsWorkforce.jsx
 import React, { useState } from 'react';
 import { Plus, X } from 'lucide-react';
+import { US_TIME_ZONES } from '../../shared/utils/usTimeZones';
+
+// Business Hours/Saturday Hours used to be a single free-text field (e.g.
+// "Mon-Fri 7:00 AM – 5:00 PM" or "By appointment only") with nothing
+// stopping arbitrary text. Replaced with a real status choice plus actual
+// time pickers when open — stored as { status, open, close } inside the
+// existing business_hours jsonb column, confirmed via probe-insert to
+// accept this shape with no schema changes needed.
+function DayHoursEditor({ label, value, onChange, writeAllowed, error }) {
+  const status = value?.status ?? '';
+  return (
+    <div className="col-6 form-group">
+      <label>{label}</label>
+      <select
+        className={`form-select ${error ? 'error' : ''}`}
+        value={status}
+        onChange={(e) => onChange({ ...value, status: e.target.value })}
+        disabled={!writeAllowed}
+      >
+        <option value="">Select status…</option>
+        <option value="open">Open (set hours below)</option>
+        <option value="closed">Closed</option>
+        <option value="appointment_only">By Appointment Only</option>
+      </select>
+      {status === 'open' && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
+          <input
+            type="time"
+            className={`form-input ${error ? 'error' : ''}`}
+            value={value?.open ?? ''}
+            onChange={(e) => onChange({ ...value, open: e.target.value })}
+            disabled={!writeAllowed}
+          />
+          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>to</span>
+          <input
+            type="time"
+            className={`form-input ${error ? 'error' : ''}`}
+            value={value?.close ?? ''}
+            onChange={(e) => onChange({ ...value, close: e.target.value })}
+            disabled={!writeAllowed}
+          />
+        </div>
+      )}
+      {error && <span className="field-error">{error}</span>}
+    </div>
+  );
+}
 
 export default function Step6OperationsWorkforce({ data, onChange, writeAllowed, errors = {} }) {
   const ops = data.operations || {};
@@ -140,40 +187,36 @@ export default function Step6OperationsWorkforce({ data, onChange, writeAllowed,
             </select>
           </div>
 
-          <div className="col-6 form-group">
-            <label>BUSINESS HOURS</label>
-            <input
-              type="text"
-              className="form-input"
-              value={ops.business_hours?.weekday ?? ''}
-              onChange={(e) => handleFieldChange('business_hours', { ...ops.business_hours, weekday: e.target.value })}
-              disabled={!writeAllowed}
-              placeholder="Mon-Fri 7:00 AM – 5:00 PM"
-            />
-          </div>
+          <DayHoursEditor
+            label="BUSINESS HOURS (WEEKDAY)"
+            value={ops.business_hours?.weekday}
+            onChange={(next) => handleFieldChange('business_hours', { ...ops.business_hours, weekday: next })}
+            writeAllowed={writeAllowed}
+            error={errors.business_hours_weekday}
+          />
 
-          <div className="col-6 form-group">
-            <label>SATURDAY HOURS</label>
-            <input
-              type="text"
-              className="form-input"
-              value={ops.business_hours?.saturday ?? ''}
-              onChange={(e) => handleFieldChange('business_hours', { ...ops.business_hours, saturday: e.target.value })}
-              disabled={!writeAllowed}
-              placeholder="By appointment only"
-            />
-          </div>
+          <DayHoursEditor
+            label="SATURDAY HOURS"
+            value={ops.business_hours?.saturday}
+            onChange={(next) => handleFieldChange('business_hours', { ...ops.business_hours, saturday: next })}
+            writeAllowed={writeAllowed}
+            error={errors.business_hours_saturday}
+          />
 
           <div className="col-6 form-group">
             <label>TIME ZONE</label>
-            <input 
-              type="text" 
-              className="form-input" 
-              value={ops.time_zone ?? ''} 
+            <select
+              className={`form-select ${errors.time_zone ? 'error' : ''}`}
+              value={ops.time_zone ?? ''}
               onChange={(e) => handleFieldChange('time_zone', e.target.value)}
               disabled={!writeAllowed}
-              placeholder="America/New_York (ET)"
-            />
+            >
+              <option value="">Select time zone…</option>
+              {US_TIME_ZONES.map(([tz, label]) => (
+                <option key={tz} value={tz}>{label}</option>
+              ))}
+            </select>
+            {errors.time_zone && <span className="field-error">{errors.time_zone}</span>}
           </div>
         </div>
       </div>
