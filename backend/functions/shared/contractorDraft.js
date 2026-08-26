@@ -34,7 +34,15 @@ async function saveContractorDraft(supabase, contractorId, { contractor, princip
     assertNoError(error, 'Business Identity (Step 2)');
   }
 
-  if (principal) {
+  // Every draft save sends the whole contractorData object regardless of
+  // which step is actually active, and get-contractor returns {} (not
+  // null/undefined) for a section that has no row yet — so `if (principal)`
+  // alone was true even for a brand-new contractor who never touched Step
+  // 3, and unconditionally upserting an empty principal failed
+  // contractor_principals.full_name's NOT NULL constraint on every single
+  // save. Only attempt a section once the user has actually put something
+  // in it (same reasoning for compliance/operations below).
+  if (principal && Object.keys(principal).length > 0) {
     const { data: existingPrincipal } = await supabase
       .from('contractor_principals').select('*').eq('contractor_id', contractorId).maybeSingle();
 
@@ -83,7 +91,7 @@ async function saveContractorDraft(supabase, contractorId, { contractor, princip
     }
   }
 
-  if (compliance) {
+  if (compliance && Object.keys(compliance).length > 0) {
     const { data: existingCompliance } = await supabase
       .from('contractor_compliance').select('w9_signed_ts').eq('contractor_id', contractorId).maybeSingle();
 
@@ -117,7 +125,7 @@ async function saveContractorDraft(supabase, contractorId, { contractor, princip
     assertNoError(error, 'Compliance & Licensing (Step 5)');
   }
 
-  if (operations) {
+  if (operations && Object.keys(operations).length > 0) {
     const { error } = await supabase.from('contractor_operations').upsert({
       contractor_id: contractorId,
       primary_trade: operations.primary_trade,
