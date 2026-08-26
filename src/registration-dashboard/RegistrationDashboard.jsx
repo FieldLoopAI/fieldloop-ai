@@ -402,6 +402,11 @@ export default function RegistrationDashboard({ staffUser }) {
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     const phoneRegex = /^\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})$/;
+    // physical_state/mailing_state/license_state are fixed character(2) DB
+    // columns — the step selects already only offer real 2-letter codes,
+    // this is a backstop for a record loaded with a pre-existing bad value
+    // (from before that fix) that the user doesn't happen to re-select.
+    const stateCodeRegex = /^[A-Z]{2}$/;
 
     if (stepNum === 2) {
       if (!c.legal_name?.trim()) errors.legal_name = "Legal Business Name is required.";
@@ -436,7 +441,11 @@ export default function RegistrationDashboard({ staffUser }) {
 
       if (!c.physical_street?.trim()) errors.physical_street = "Physical Street Address is required.";
       if (!c.physical_city?.trim()) errors.physical_city = "Physical City is required.";
-      if (!c.physical_state?.trim()) errors.physical_state = "Physical State is required.";
+      if (!c.physical_state?.trim()) {
+        errors.physical_state = "Physical State is required.";
+      } else if (!stateCodeRegex.test(c.physical_state.trim())) {
+        errors.physical_state = "Select a valid 2-letter state from the list.";
+      }
       if (!c.physical_zip?.trim()) {
         errors.physical_zip = "Physical ZIP Code is required.";
       } else if (!/^\d{5}(-\d{4})?$/.test(c.physical_zip.trim())) {
@@ -445,7 +454,11 @@ export default function RegistrationDashboard({ staffUser }) {
 
       if (c.mailing_street?.trim()) {
         if (!c.mailing_city?.trim()) errors.mailing_city = "Mailing City is required.";
-        if (!c.mailing_state?.trim()) errors.mailing_state = "Mailing State is required.";
+        if (!c.mailing_state?.trim()) {
+          errors.mailing_state = "Mailing State is required.";
+        } else if (!stateCodeRegex.test(c.mailing_state.trim())) {
+          errors.mailing_state = "Select a valid 2-letter state from the list.";
+        }
         if (!c.mailing_zip?.trim()) {
           errors.mailing_zip = "Mailing ZIP Code is required.";
         } else if (!/^\d{5}(-\d{4})?$/.test(c.mailing_zip.trim())) {
@@ -532,7 +545,11 @@ export default function RegistrationDashboard({ staffUser }) {
 
     if (stepNum === 5) {
       if (!comp.primary_license_number?.trim()) errors.primary_license_number = "Primary State Trade License Number is required.";
-      if (!comp.license_state?.trim()) errors.license_state = "License State is required.";
+      if (!comp.license_state?.trim()) {
+        errors.license_state = "License State is required.";
+      } else if (!stateCodeRegex.test(comp.license_state.trim())) {
+        errors.license_state = "Select a valid 2-letter state from the list.";
+      }
       if (!comp.license_issuing_authority?.trim()) errors.license_issuing_authority = "License Issuing Authority is required.";
       if (!comp.license_expiration_date) {
         errors.license_expiration_date = "License Expiration Date is required.";

@@ -1,6 +1,7 @@
 // src/components/steps/Step5ComplianceLicensing.jsx
 import React, { useState } from 'react';
 import { Plus, X } from 'lucide-react';
+import { US_STATES } from '../../shared/utils/usStates';
 
 export default function Step5ComplianceLicensing({ data, onChange, _activeUser, writeAllowed, errors = {} }) {
   const comp = data.compliance || {};
@@ -86,14 +87,17 @@ export default function Step5ComplianceLicensing({ data, onChange, _activeUser, 
 
           <div className="col-6 form-group">
             <label>LICENSE STATE *</label>
-            <input 
-              type="text" 
-              className={`form-input ${errors.license_state ? 'error' : ''}`} 
-              value={comp.license_state ?? ''} 
+            <select
+              className={`form-select ${errors.license_state ? 'error' : ''}`}
+              value={comp.license_state ?? ''}
               onChange={(e) => handleFieldChange('license_state', e.target.value)}
               disabled={!writeAllowed}
-              placeholder="e.g. Florida"
-            />
+            >
+              <option value="">Select state…</option>
+              {US_STATES.map(([code, name]) => (
+                <option key={code} value={code}>{name} ({code})</option>
+              ))}
+            </select>
             {errors.license_state && <span className="field-error">{errors.license_state}</span>}
           </div>
 

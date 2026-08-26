@@ -2,6 +2,7 @@
 import React from 'react';
 import { Lock } from 'lucide-react';
 import { formatEinInput, formatPhoneInput } from '../../shared/utils/formatters';
+import { US_STATES } from '../../shared/utils/usStates';
 
 export default function Step2BusinessIdentity({ data, onChange, _activeUser, revealedValues, onReveal, onRevealedValueChange, writeAllowed, errors = {} }) {
   const c = data.contractor || {};
@@ -250,27 +251,33 @@ export default function Step2BusinessIdentity({ data, onChange, _activeUser, rev
 
           <div className="col-6 form-group">
             <label>STATE *</label>
-            <input 
-              type="text" 
-              className={`form-input ${errors.physical_state ? 'error' : ''}`}
+            <select
+              className={`form-select ${errors.physical_state ? 'error' : ''}`}
               value={c.physical_state ?? ''}
               onChange={(e) => handleFieldChange('physical_state', e.target.value)}
               disabled={!writeAllowed}
-              placeholder="State"
-            />
+            >
+              <option value="">Select state…</option>
+              {US_STATES.map(([code, name]) => (
+                <option key={code} value={code}>{name} ({code})</option>
+              ))}
+            </select>
             {errors.physical_state && <span className="field-error">{errors.physical_state}</span>}
           </div>
 
           <div className="col-6 form-group">
             <label>MAILING STATE</label>
-            <input 
-              type="text" 
-              className={`form-input ${errors.mailing_state ? 'error' : ''}`}
+            <select
+              className={`form-select ${errors.mailing_state ? 'error' : ''}`}
               value={c.mailing_state ?? ''}
               onChange={(e) => handleFieldChange('mailing_state', e.target.value)}
               disabled={!writeAllowed}
-              placeholder="Mailing State"
-            />
+            >
+              <option value="">Select state…</option>
+              {US_STATES.map(([code, name]) => (
+                <option key={code} value={code}>{name} ({code})</option>
+              ))}
+            </select>
             {errors.mailing_state && <span className="field-error">{errors.mailing_state}</span>}
           </div>
 
