@@ -107,8 +107,26 @@ exports.handler = async (event) => {
     // ---- Knowledge Base stats ----
     const { data: kbTrades, error: kbtErr } = await supabase.from('kb_trades').select('id, name, slug');
     if (kbtErr) throw new Error(kbtErr.message);
-    const { data: kbEntries, error: kbeErr } = await supabase.from('kb_entries').select('status, trade_id, created_by');
-    if (kbeErr) throw new Error(kbeErr.message);
+    // kb_entries has grown past Supabase/PostgREST's default 1000-row cap
+    // per request (2,842 rows as of the second content wave, HANDOFF.md
+    // §35) — a plain .select() here silently truncates to the first 1000,
+    // and since Postgres scans a partitioned table one partition at a time
+    // with no ORDER BY, that 1000-row cap was landing entirely inside the
+    // first-created partition (concrete_and_pavers), making every other
+    // trade look like it had zero approved facts. Paginate with .range()
+    // until a page comes back short, same fix already applied to
+    // backend/scripts/generate-review-sample.mjs for the same root cause.
+    const kbEntries = [];
+    const KB_PAGE_SIZE = 1000;
+    for (let from = 0; ; from += KB_PAGE_SIZE) {
+      const { data: page, error: kbeErr } = await supabase
+        .from('kb_entries')
+        .select('status, trade_id, created_by')
+        .range(from, from + KB_PAGE_SIZE - 1);
+      if (kbeErr) throw new Error(kbeErr.message);
+      kbEntries.push(...page);
+      if (page.length < KB_PAGE_SIZE) break;
+    }
     const kbStatusCounts = {};
     kbEntries.forEach((e) => { kbStatusCounts[e.status] = (kbStatusCounts[e.status] || 0) + 1; });
     const approvedByTrade = {};
